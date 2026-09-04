@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: lankalistings-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lankalistings
+      POSTGRES_PASSWORD: lankalistings
+      POSTGRES_DB: lankalistings
+      # Deterministic collation. Index ordering must not depend on the host locale, or the same
+      # migration produces different sort behaviour on different machines.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    ports:
+      # 5434 on the host: 5432 and 5433 are already taken by other projects on this machine.
+      # Override with POSTGRES_HOST_PORT if 5434 is also in use.
+      - "${POSTGRES_HOST_PORT:-5434}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Creates the separate test database. The suite truncates between tests, so it must never
+      # point at the development database.
+      - ./scripts/init-databases.sql:/docker-entrypoint-initdb.d/10-init-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lankalistings -d lankalistings"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  postgres-data:

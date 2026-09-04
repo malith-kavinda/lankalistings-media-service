@@ -18,3 +18,6 @@ dist/
 .env.*
 !.env.example
 *.log
+
+# Alembic scratch
+migrations/__pycache__/
