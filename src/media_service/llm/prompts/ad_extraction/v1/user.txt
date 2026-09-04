@@ -1,0 +1,34 @@
+Document ID: {{ingestion_item_id}}
+Expected OCR languages: Sinhala and English
+Allowed categories: {{category_catalog}}
+Schema version: {{schema_version}}
+
+<ocr_blocks>
+{{ocr_blocks}}
+</ocr_blocks>
+
+Extract every independent advertisement present in the source above.
+
+Rules:
+
+1. Use the block identifiers and their coordinates to resolve column layout and advertisement boundaries.
+   Blocks in the same column that read as one continuous advertisement belong together; blocks in
+   different columns usually do not.
+2. Preserve the source wording for title and description. When the clearest wording is Sinhala, keep it in
+   Sinhala; do not translate it into English.
+3. Normalise phone numbers and prices without changing their meaning. Keep the price exactly as written in
+   `price.raw`, and put the numeric value in `price.amount` only when you can read it unambiguously.
+4. Set `price.currency` to "LKR" only when the source indicates Sri Lankan rupees, whether written as Rs,
+   රු, LKR, or an equivalent. Otherwise leave it null.
+5. Choose `category` only from the allowed categories listed above. If none applies with confidence, use
+   "other" and add a warning.
+6. Set `language` to the dominant language of the advertisement text: "si" for Sinhala, "en" for English,
+   "ta" for Tamil, "mixed" when neither dominates, or "unknown".
+7. Return null for any fact that is absent or that you cannot read reliably.
+8. List in `source_block_ids` every block that supports the advertisement. Only use identifiers that
+   appear in the source above. An advertisement with no supporting block will be discarded.
+9. Give an overall confidence and a per-field confidence between 0.0 and 1.0. Lower the confidence where
+   OCR damage makes you uncertain rather than reporting a confident guess.
+10. Add a warning where text looks OCR-corrupted, where a price or phone number is ambiguous, or where the
+    advertisement boundary was difficult to determine.
+11. If the source contains no advertisement at all, return an empty `advertisements` array.

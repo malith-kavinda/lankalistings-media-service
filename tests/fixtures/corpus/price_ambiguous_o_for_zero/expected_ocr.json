@@ -1,0 +1,51 @@
+{
+  "engine": "tesseract",
+  "engine_version": "5.4.0.20240606",
+  "languages": "sin+eng",
+  "width": 820,
+  "height": 400,
+  "mean_confidence": 0.9472,
+  "block_count": 3,
+  "text": "Refrigerator, double door\nRs. 120,000\n\nPanadura\n\nLightly used, warranty card available.\n0382345678",
+  "blocks": [
+    {
+      "id": 1,
+      "text": "Refrigerator, double door\nRs. 120,000",
+      "box": [
+        42,
+        50,
+        358,
+        64
+      ],
+      "confidence": 0.96,
+      "line_count": 2,
+      "source_ref": "page=1;block=1;par=1"
+    },
+    {
+      "id": 2,
+      "text": "Panadura",
+      "box": [
+        42,
+        127,
+        99,
+        17
+      ],
+      "confidence": 0.92,
+      "line_count": 1,
+      "source_ref": "page=1;block=1;par=2"
+    },
+    {
+      "id": 3,
+      "text": "Lightly used, warranty card available.\n0382345678",
+      "box": [
+        41,
+        160,
+        354,
+        50
+      ],
+      "confidence": 0.9617,
+      "line_count": 2,
+      "source_ref": "page=1;block=1;par=3"
+    }
+  ]
+}

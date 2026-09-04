@@ -1,0 +1,12 @@
+Your previous response did not conform to the required schema.
+
+Validation reported these problems:
+
+{{validation_errors}}
+
+Return the same extraction again, corrected so that it conforms to the schema. Do not change any extracted
+fact in order to satisfy the schema: if a value could not be represented, return null for it rather than
+substituting a different value. Do not add advertisements that were not in your previous response, and do
+not remove ones that were.
+
+Return only JSON. No Markdown, no code fences, no commentary.

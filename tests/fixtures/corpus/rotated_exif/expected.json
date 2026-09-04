@@ -1,0 +1,32 @@
+{
+  "case": "rotated_exif",
+  "description": "A skewed scan, as produced by a hand-held photograph of a page.",
+  "exercises": [
+    "FR-OCR-004/005: orientation and deskew handling",
+    "Extraction still succeeds on a degraded scan"
+  ],
+  "expected_ad_count": 1,
+  "ocr": {
+    "expect_low_confidence": false
+  },
+  "advertisements": [
+    {
+      "category": "property",
+      "language": "en",
+      "price": {
+        "amount": 95000,
+        "currency": "LKR",
+        "raw_contains": "95,000"
+      },
+      "phones": [
+        "0117654321"
+      ],
+      "location_contains": "Colombo",
+      "title_contains_any": [
+        "Office",
+        "Rent"
+      ]
+    }
+  ],
+  "expected_warning_codes": []
+}

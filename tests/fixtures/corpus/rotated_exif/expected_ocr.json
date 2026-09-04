@@ -1,0 +1,38 @@
+{
+  "engine": "tesseract",
+  "engine_version": "5.4.0.20240606",
+  "languages": "sin+eng",
+  "width": 860,
+  "height": 504,
+  "mean_confidence": 0.9294,
+  "block_count": 2,
+  "text": "Office Space for Rent\nRs. 95,000 pet month\nColombo 05\n\n4200 square feet, parking available.\n0117654321",
+  "blocks": [
+    {
+      "id": 1,
+      "text": "Office Space for Rent\nRs. 95,000 pet month\nColombo 05",
+      "box": [
+        47,
+        98,
+        327,
+        126
+      ],
+      "confidence": 0.922,
+      "line_count": 3,
+      "source_ref": "page=1;block=1;par=1"
+    },
+    {
+      "id": 2,
+      "text": "4200 square feet, parking available.\n0117654321",
+      "box": [
+        59,
+        203,
+        339,
+        87
+      ],
+      "confidence": 0.9367,
+      "line_count": 2,
+      "source_ref": "page=1;block=1;par=2"
+    }
+  ]
+}

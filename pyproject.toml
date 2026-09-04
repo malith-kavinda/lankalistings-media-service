@@ -26,10 +26,26 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Prompt templates and manifests are data files. Without this they are absent from a built wheel, so the
+# service works in an editable install and fails at runtime in a deployed container.
+[tool.setuptools.package-data]
+"media_service.llm.prompts" = ["**/*.txt", "**/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
-addopts = ["--strict-markers"]
+pythonpath = ["src", "."]
+# --basetemp: the default under %TEMP% is not writable in every environment here, which makes tmp_path
+#   fixtures error before the test body runs.
+# -m "not live": tests must never require a paid provider call (AC-016). Opt in with `-m live`.
+addopts = [
+  "--strict-markers",
+  "--basetemp=.pytest-tmp",
+  "-m",
+  "not live",
+]
+markers = [
+  "live: hits a real LLM or OCR provider; requires credentials and is excluded by default",
+]
 
 [tool.ruff]
 line-length = 100

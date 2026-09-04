@@ -1,0 +1,33 @@
+{
+  "case": "low_resolution",
+  "description": "A small, downscaled clipping.",
+  "exercises": [
+    "FR-OCR-008: low confidence still proceeds to extraction but warns",
+    "Small text does not cause invented values"
+  ],
+  "expected_ad_count": 1,
+  "ocr": {
+    "expect_low_confidence": false,
+    "max_mean_confidence": 0.95
+  },
+  "advertisements": [
+    {
+      "category": "electronics",
+      "language": "en",
+      "price": {
+        "amount": 135000,
+        "currency": "LKR",
+        "raw_contains": "135,000"
+      },
+      "phones": [
+        "0912345678"
+      ],
+      "location_contains": "Galle",
+      "title_contains_any": [
+        "Laptop",
+        "i5"
+      ]
+    }
+  ],
+  "expected_warning_codes": []
+}

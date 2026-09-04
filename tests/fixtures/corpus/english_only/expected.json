@@ -1,0 +1,40 @@
+{
+  "case": "english_only",
+  "description": "Single English property advertisement.",
+  "exercises": [
+    "Baseline extraction with no language ambiguity",
+    "Multi-line description assembled from adjacent blocks"
+  ],
+  "expected_ad_count": 1,
+  "ocr": {
+    "expect_low_confidence": false,
+    "min_mean_confidence": 0.85
+  },
+  "advertisements": [
+    {
+      "category": "property",
+      "language": "en",
+      "price": {
+        "amount": 42500000,
+        "currency": "LKR",
+        "raw_contains": "42,500,000"
+      },
+      "phones": [
+        "0112345678"
+      ],
+      "location_contains": "Nugegoda",
+      "title_contains_any": [
+        "Bedroom",
+        "House"
+      ],
+      "evidence_within_blocks": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    }
+  ],
+  "expected_warning_codes": []
+}

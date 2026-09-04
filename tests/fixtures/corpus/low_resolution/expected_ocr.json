@@ -1,0 +1,51 @@
+{
+  "engine": "tesseract",
+  "engine_version": "5.4.0.20240606",
+  "languages": "sin+eng",
+  "width": 369,
+  "height": 180,
+  "mean_confidence": 0.8511,
+  "block_count": 3,
+  "text": "Laptop for sale, i5 8th gen\nRs. 135,000\n\nGalle\n\n83GB RAM, 25668 SSD, good battery\n0912345678",
+  "blocks": [
+    {
+      "id": 1,
+      "text": "Laptop for sale, i5 8th gen\nRs. 135,000",
+      "box": [
+        19,
+        22,
+        187,
+        32
+      ],
+      "confidence": 0.9263,
+      "line_count": 2,
+      "source_ref": "page=1;block=1;par=1"
+    },
+    {
+      "id": 2,
+      "text": "Galle",
+      "box": [
+        19,
+        60,
+        28,
+        9
+      ],
+      "confidence": 0.94,
+      "line_count": 1,
+      "source_ref": "page=1;block=1;par=2"
+    },
+    {
+      "id": 3,
+      "text": "83GB RAM, 25668 SSD, good battery\n0912345678",
+      "box": [
+        18,
+        77,
+        191,
+        26
+      ],
+      "confidence": 0.6871,
+      "line_count": 2,
+      "source_ref": "page=1;block=1;par=3"
+    }
+  ]
+}

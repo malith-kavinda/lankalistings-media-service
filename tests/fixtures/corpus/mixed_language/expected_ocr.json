@@ -1,0 +1,64 @@
+{
+  "engine": "tesseract",
+  "engine_version": "5.4.0.20240606",
+  "languages": "sin+eng",
+  "width": 820,
+  "height": 440,
+  "mean_confidence": 0.8656,
+  "block_count": 4,
+  "text": "සුසුකි xGOGoSs 2015 විකිණීමට\n\nSuzuki Alto 800, manual, petrol\n\nමිල රු. 3,250,000 (සාකච්ඡා කළ හැක)\nLocation: Gampaha\n\nCall 0719876543",
+  "blocks": [
+    {
+      "id": 1,
+      "text": "සුසුකි xGOGoSs 2015 විකිණීමට",
+      "box": [
+        41,
+        43,
+        491,
+        39
+      ],
+      "confidence": 0.6775,
+      "line_count": 1,
+      "source_ref": "page=1;block=1;par=1"
+    },
+    {
+      "id": 2,
+      "text": "Suzuki Alto 800, manual, petrol",
+      "box": [
+        41,
+        85,
+        350,
+        24
+      ],
+      "confidence": 0.96,
+      "line_count": 1,
+      "source_ref": "page=1;block=2;par=1"
+    },
+    {
+      "id": 3,
+      "text": "මිල රු. 3,250,000 (සාකච්ඡා කළ හැක)\nLocation: Gampaha",
+      "box": [
+        42,
+        122,
+        478,
+        61
+      ],
+      "confidence": 0.905,
+      "line_count": 2,
+      "source_ref": "page=1;block=2;par=2"
+    },
+    {
+      "id": 4,
+      "text": "Call 0719876543",
+      "box": [
+        41,
+        195,
+        190,
+        19
+      ],
+      "confidence": 0.92,
+      "line_count": 1,
+      "source_ref": "page=1;block=2;par=3"
+    }
+  ]
+}

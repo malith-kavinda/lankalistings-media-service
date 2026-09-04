@@ -1,0 +1,35 @@
+{
+  "case": "price_ambiguous_o_for_zero",
+  "description": "A price printed with capital O standing in for zero.",
+  "exercises": [
+    "Raw price text is preserved verbatim",
+    "A normalised amount is only asserted with a warning and reduced confidence",
+    "The reviewer can see what the source actually said"
+  ],
+  "expected_ad_count": 1,
+  "ocr": {
+    "expect_low_confidence": false
+  },
+  "advertisements": [
+    {
+      "category": "home_garden",
+      "language": "en",
+      "price": {
+        "amount_any_of": [
+          120000,
+          null
+        ],
+        "currency": "LKR",
+        "raw_must_be_preserved": true
+      },
+      "phones": [
+        "0382345678"
+      ],
+      "location_contains": "Panadura",
+      "price_confidence_below": 0.9
+    }
+  ],
+  "expected_warning_codes": [
+    "OCR_AMBIGUOUS_CHARACTER"
+  ]
+}

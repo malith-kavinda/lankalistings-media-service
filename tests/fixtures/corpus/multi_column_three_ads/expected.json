@@ -1,0 +1,76 @@
+{
+  "case": "multi_column_three_ads",
+  "description": "Three unrelated advertisements in three ruled columns.",
+  "exercises": [
+    "AC-002: three independent candidates from one image",
+    "False-merge and false-split rates",
+    "Column reading order via block coordinates",
+    "Each candidate cites only its own column's blocks"
+  ],
+  "expected_ad_count": 3,
+  "ocr": {
+    "expect_low_confidence": false,
+    "min_mean_confidence": 0.85
+  },
+  "advertisements": [
+    {
+      "category": "vehicles",
+      "language": "en",
+      "price": {
+        "amount": 5750000,
+        "currency": "LKR",
+        "raw_contains": "5,750,000"
+      },
+      "phones": [
+        "0812233445"
+      ],
+      "location_contains": "Kandy",
+      "title_contains_any": [
+        "Honda",
+        "Fit"
+      ],
+      "evidence_within_blocks": [
+        1,
+        2
+      ]
+    },
+    {
+      "category": "land",
+      "language": "si",
+      "price": {
+        "amount": 1800000,
+        "currency": "LKR",
+        "raw_contains": "1,800,000"
+      },
+      "phones": [
+        "0412345678"
+      ],
+      "evidence_within_blocks": [
+        3,
+        4
+      ]
+    },
+    {
+      "category": "jobs",
+      "language": "en",
+      "price": {
+        "amount": null,
+        "currency": null
+      },
+      "phones": [
+        "0114567890"
+      ],
+      "location_contains": "Colombo",
+      "title_contains_any": [
+        "Accounts",
+        "Clerk"
+      ],
+      "evidence_within_blocks": [
+        5,
+        6
+      ]
+    }
+  ],
+  "expected_warning_codes": [],
+  "disjoint_evidence": true
+}

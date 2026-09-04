@@ -1,0 +1,14 @@
+{
+  "case": "no_ads",
+  "description": "A weather report. Editorial content with no advertisement.",
+  "exercises": [
+    "AC-003: an empty advertisements array marks the item no_ads",
+    "No candidate is created from non-advertisement text"
+  ],
+  "expected_ad_count": 0,
+  "ocr": {
+    "expect_low_confidence": false
+  },
+  "advertisements": [],
+  "expected_warning_codes": []
+}

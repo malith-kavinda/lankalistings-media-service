@@ -1,0 +1,52 @@
+{
+  "case": "duplicate_phone",
+  "description": "Two genuine advertisements that share one contact number.",
+  "exercises": [
+    "FR-CAN-007/008: a shared phone raises a duplicate warning",
+    "Both candidates are kept; neither is silently discarded"
+  ],
+  "expected_ad_count": 2,
+  "ocr": {
+    "expect_low_confidence": false
+  },
+  "advertisements": [
+    {
+      "category": "vehicles",
+      "language": "en",
+      "price": {
+        "amount": 615000,
+        "currency": "LKR",
+        "raw_contains": "615,000"
+      },
+      "phones": [
+        "0771111222"
+      ],
+      "location_contains": "Kurunegala",
+      "title_contains_any": [
+        "Yamaha",
+        "FZ"
+      ]
+    },
+    {
+      "category": "vehicles",
+      "language": "en",
+      "price": {
+        "amount": 245000,
+        "currency": "LKR",
+        "raw_contains": "245,000"
+      },
+      "phones": [
+        "0771111222"
+      ],
+      "location_contains": "Kurunegala",
+      "title_contains_any": [
+        "Bajaj",
+        "CT"
+      ]
+    }
+  ],
+  "expected_warning_codes": [
+    "POSSIBLE_DUPLICATE"
+  ],
+  "disjoint_evidence": true
+}

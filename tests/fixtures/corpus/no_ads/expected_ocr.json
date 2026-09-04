@@ -1,0 +1,51 @@
+{
+  "engine": "tesseract",
+  "engine_version": "5.4.0.20240606",
+  "languages": "sin+eng",
+  "width": 820,
+  "height": 400,
+  "mean_confidence": 0.9406,
+  "block_count": 3,
+  "text": "WEATHER\n\nShowers are expected in the Western and\nSabaragamuwa provinces this afternoon.\nSeas around the island will be moderate.\n\nකාලගුණ අනාවැකිය",
+  "blocks": [
+    {
+      "id": 1,
+      "text": "WEATHER",
+      "box": [
+        40,
+        50,
+        161,
+        23
+      ],
+      "confidence": 0.96,
+      "line_count": 1,
+      "source_ref": "page=1;block=1;par=1"
+    },
+    {
+      "id": 2,
+      "text": "Showers are expected in the Western and\nSabaragamuwa provinces this afternoon.\nSeas around the island will be moderate.",
+      "box": [
+        41,
+        91,
+        441,
+        85
+      ],
+      "confidence": 0.9567,
+      "line_count": 3,
+      "source_ref": "page=1;block=1;par=2"
+    },
+    {
+      "id": 3,
+      "text": "කාලගුණ අනාවැකිය",
+      "box": [
+        41,
+        195,
+        249,
+        29
+      ],
+      "confidence": 0.905,
+      "line_count": 1,
+      "source_ref": "page=1;block=2;par=1"
+    }
+  ]
+}

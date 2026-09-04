@@ -1,0 +1,51 @@
+{
+  "engine": "tesseract",
+  "engine_version": "5.4.0.20240606",
+  "languages": "sin+eng",
+  "width": 820,
+  "height": 420,
+  "mean_confidence": 0.576,
+  "block_count": 3,
+  "text": "ටණායණාටා ජූරියස්2016\nමිල රු. 8,500,000\n\nකණාළඹ 03\n\nQDI NEE නනත්වයම- වාහනයකි\nCOMO) 0771234567",
+  "blocks": [
+    {
+      "id": 1,
+      "text": "ටණායණාටා ජූරියස්2016\nමිල රු. 8,500,000",
+      "box": [
+        42,
+        47,
+        454,
+        82
+      ],
+      "confidence": 0.768,
+      "line_count": 2,
+      "source_ref": "page=1;block=1;par=1"
+    },
+    {
+      "id": 2,
+      "text": "කණාළඹ 03",
+      "box": [
+        41,
+        138,
+        157,
+        27
+      ],
+      "confidence": 0.48,
+      "line_count": 1,
+      "source_ref": "page=1;block=1;par=2"
+    },
+    {
+      "id": 3,
+      "text": "QDI NEE නනත්වයම- වාහනයකි\nCOMO) 0771234567",
+      "box": [
+        36,
+        172,
+        422,
+        68
+      ],
+      "confidence": 0.48,
+      "line_count": 2,
+      "source_ref": "page=1;block=1;par=3"
+    }
+  ]
+}

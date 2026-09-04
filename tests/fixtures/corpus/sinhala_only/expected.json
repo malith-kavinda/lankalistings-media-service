@@ -1,0 +1,43 @@
+{
+  "case": "sinhala_only",
+  "description": "Single Sinhala vehicle advertisement on a clean page.",
+  "exercises": [
+    "Sinhala Unicode survives OCR, storage, and serialisation (AC-012)",
+    "Heavy conjunct corruption must lower confidence, not be silently repaired",
+    "Numerals and phone digits survive even when surrounding Sinhala does not"
+  ],
+  "expected_ad_count": 1,
+  "ocr": {
+    "expect_low_confidence": true,
+    "max_mean_confidence": 0.75
+  },
+  "advertisements": [
+    {
+      "category": "vehicles",
+      "language": "si",
+      "price": {
+        "amount": 8500000,
+        "currency": "LKR",
+        "raw_contains": "8,500,000"
+      },
+      "phones": [
+        "0771234567"
+      ],
+      "location_contains": "03",
+      "title_from_blocks": [
+        1
+      ],
+      "evidence_within_blocks": [
+        1,
+        2,
+        3
+      ]
+    }
+  ],
+  "expected_warning_codes": [
+    "LOW_CONFIDENCE"
+  ],
+  "must_not_contain": {
+    "note": "The title line is OCR-damaged. A clean, plausible Sinhala title would be invented."
+  }
+}

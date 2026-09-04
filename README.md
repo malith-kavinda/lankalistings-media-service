@@ -145,7 +145,41 @@ cd media-service
 pytest
 ```
 
-Tests cover health, image validation, OCR unavailable behavior, mocked successful extraction, retrieval, not found behavior, and JSON-backed local persistence.
+Tests cover health, image validation, OCR unavailable behavior, mocked successful extraction, retrieval, not found behavior, JSON-backed local persistence, the category catalog, prompt templates, and the regression corpus.
+
+No test requires a live OCR or LLM provider. Tests that would are marked `live` and excluded by default; run them with `pytest -m live` once credentials are configured.
+
+## Regression Corpus
+
+`tests/fixtures/corpus/` holds the versioned fixtures the extraction pipeline is measured against. Each case directory contains:
+
+| File | Meaning |
+|---|---|
+| `image.png` | The source page, rendered deterministically |
+| `expected_ocr.json` | What Tesseract **actually** produces, including its mistakes |
+| `expected.json` | What extraction **should** recover — the hand-authored ground truth |
+
+Images are rendered rather than photographed so the corpus is reproducible and contains no real personal data. Real newspaper classifieds carry real phone numbers and addresses, which must not be committed.
+
+The ten cases cover Sinhala-only, English-only, mixed-language, multi-column with three independent ads, no-ad editorial content, prompt injection, duplicate phone numbers, an ambiguous `O`-for-zero price, a rotated scan, and a low-resolution clipping.
+
+`sinhala_only` is deliberately the hardest case. Tesseract corrupts its Sinhala conjuncts badly (mean confidence around 0.58) while the price and phone number survive intact — so it tests that extraction reports a damaged title with low confidence instead of inventing a clean one.
+
+Regenerating fixtures (development only, requires Tesseract and Windows fonts):
+
+```bash
+python -m tests.fixtures.generate_corpus      # render image.png for every case
+python -m tests.fixtures.capture_ocr          # re-capture expected_ocr.json
+python -m tests.fixtures.author_expectations  # rewrite expected.json
+```
+
+A diff in a fixture always means a case changed on purpose. Re-capturing after an OCR configuration change shows exactly which cases it affected.
+
+## Prompts
+
+Extraction prompts are versioned under `src/media_service/llm/prompts/<family>/<version>/`. Every run records the prompt version *and* a checksum of the template files.
+
+`tests/test_prompts.py` pins that checksum. Editing a prompt without bumping its version fails the suite, because a silent prompt edit invalidates the regression corpus and every accuracy measurement taken against it with nothing in the provenance record showing that anything changed.
 
 ## Persistence Roadmap
 

@@ -1,0 +1,77 @@
+{
+  "engine": "tesseract",
+  "engine_version": "5.4.0.20240606",
+  "languages": "sin+eng",
+  "width": 820,
+  "height": 420,
+  "mean_confidence": 0.9551,
+  "block_count": 5,
+  "text": "Three Bedroom House for Sale\nRs. 42,500,000\n\nNugegoda, Colombo District\n\nTwo storey, 12 perches, quiet lane,\n\nclose to schools and main road.\n\nContact 0112345678",
+  "blocks": [
+    {
+      "id": 1,
+      "text": "Three Bedroom House for Sale\nRs. 42,500,000",
+      "box": [
+        41,
+        46,
+        497,
+        70
+      ],
+      "confidence": 0.9586,
+      "line_count": 2,
+      "source_ref": "page=1;block=1;par=1"
+    },
+    {
+      "id": 2,
+      "text": "Nugegoda, Colombo District",
+      "box": [
+        42,
+        129,
+        319,
+        24
+      ],
+      "confidence": 0.94,
+      "line_count": 1,
+      "source_ref": "page=1;block=1;par=2"
+    },
+    {
+      "id": 3,
+      "text": "Two storey, 12 perches, quiet lane,",
+      "box": [
+        41,
+        165,
+        368,
+        22
+      ],
+      "confidence": 0.96,
+      "line_count": 1,
+      "source_ref": "page=1;block=1;par=3"
+    },
+    {
+      "id": 4,
+      "text": "close to schools and main road.",
+      "box": [
+        41,
+        199,
+        331,
+        17
+      ],
+      "confidence": 0.9567,
+      "line_count": 1,
+      "source_ref": "page=1;block=1;par=4"
+    },
+    {
+      "id": 5,
+      "text": "Contact 0112345678",
+      "box": [
+        41,
+        233,
+        233,
+        19
+      ],
+      "confidence": 0.96,
+      "line_count": 1,
+      "source_ref": "page=1;block=1;par=5"
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "engine": "tesseract",
+  "engine_version": "5.4.0.20240606",
+  "languages": "sin+eng",
+  "width": 1000,
+  "height": 560,
+  "mean_confidence": 0.9216,
+  "block_count": 6,
+  "text": "Honda Fit 2014\nRs. 5,750,000\nKandy\n\nFull option, new tyres,\naccident free vehicle.\n0812233445\n\nඉඩම විකිණීමට\nපර්වස් 20\nමානර\n\nර. 1,800,000\n0412345678\n\nAccounts Clerk\nVacancy in Colombo 07\nExperience 2 years,\nsalary negotiable.\n\nApply 0114567890",
+  "blocks": [
+    {
+      "id": 1,
+      "text": "Honda Fit 2014\nRs. 5,750,000\nKandy",
+      "box": [
+        42,
+        50,
+        198,
+        90
+      ],
+      "confidence": 0.9583,
+      "line_count": 3,
+      "source_ref": "page=1;block=1;par=1"
+    },
+    {
+      "id": 2,
+      "text": "Full option, new tyres,\naccident free vehicle.\n0812233445",
+      "box": [
+        41,
+        152,
+        192,
+        76
+      ],
+      "confidence": 0.9575,
+      "line_count": 3,
+      "source_ref": "page=1;block=1;par=2"
+    },
+    {
+      "id": 3,
+      "text": "ඉඩම විකිණීමට\nපර්වස් 20\nමානර",
+      "box": [
+        376,
+        51,
+        202,
+        89
+      ],
+      "confidence": 0.904,
+      "line_count": 3,
+      "source_ref": "page=1;block=2;par=1"
+    },
+    {
+      "id": 4,
+      "text": "ර. 1,800,000\n0412345678",
+      "box": [
+        376,
+        153,
+        129,
+        49
+      ],
+      "confidence": 0.79,
+      "line_count": 2,
+      "source_ref": "page=1;block=3;par=1"
+    },
+    {
+      "id": 5,
+      "text": "Accounts Clerk\nVacancy in Colombo 07\nExperience 2 years,\nsalary negotiable.",
+      "box": [
+        710,
+        50,
+        229,
+        117
+      ],
+      "confidence": 0.96,
+      "line_count": 4,
+      "source_ref": "page=1;block=4;par=1"
+    },
+    {
+      "id": 6,
+      "text": "Apply 0114567890",
+      "box": [
+        710,
+        178,
+        180,
+        20
+      ],
+      "confidence": 0.96,
+      "line_count": 1,
+      "source_ref": "page=1;block=4;par=2"
+    }
+  ]
+}

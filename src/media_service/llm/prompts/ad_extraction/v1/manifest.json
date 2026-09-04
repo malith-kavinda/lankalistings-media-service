@@ -1,0 +1,17 @@
+{
+  "version": "ad-extraction/v1",
+  "schema_version": "1.0",
+  "system": "system.txt",
+  "user": "user.txt",
+  "repair": "repair.txt",
+  "max_ocr_chars": 24000,
+  "required_placeholders": [
+    "ingestion_item_id",
+    "category_catalog",
+    "schema_version",
+    "ocr_blocks"
+  ],
+  "repair_placeholders": [
+    "validation_errors"
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "case": "mixed_language",
+  "description": "One advertisement written in both Sinhala and English.",
+  "exercises": [
+    "FR-LLM-005 mixed-language handling",
+    "language must be 'mixed' rather than forced to one script",
+    "A negotiable-price note must not corrupt the numeric amount"
+  ],
+  "expected_ad_count": 1,
+  "ocr": {
+    "expect_low_confidence": false
+  },
+  "advertisements": [
+    {
+      "category": "vehicles",
+      "language_any_of": [
+        "mixed",
+        "si",
+        "en"
+      ],
+      "price": {
+        "amount": 3250000,
+        "currency": "LKR",
+        "raw_contains": "3,250,000"
+      },
+      "phones": [
+        "0719876543"
+      ],
+      "location_contains": "Gampaha",
+      "evidence_within_blocks": [
+        1,
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "expected_warning_codes": []
+}
