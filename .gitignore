@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-tmp/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Local runtime state
+.data/
+
+# Tesseract trained data - download separately, see README
+.tessdata/
+
+.env
+.env.*
+!.env.example
+*.log
