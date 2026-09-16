@@ -16,16 +16,29 @@ dependencies = [
   "pydantic-settings>=2.4,<3.0",
   "python-multipart>=0.0.9,<1.0",
   "python-ulid>=2.2,<4.0",
-  "pytesseract>=0.3.13,<1.0",
   "sqlalchemy>=2.0.30,<3.0",
   "uvicorn[standard]>=0.30,<1.0"
 ]
+
+# pytesseract is deliberately absent. The provider drives the tesseract binary itself, because
+# pytesseract splits its config string with shlex(posix=False) on Windows -- which makes
+# --tessdata-dir unusable for any path containing a space, and the Sinhala language data lives
+# under one. Driving the binary also lets the tessdata directory be passed through the child
+# process's environment instead of this process's, and lets OCR_TIMEOUT_SECONDS actually kill a
+# run.
 
 [project.optional-dependencies]
 dev = [
   "httpx>=0.27,<1.0",
   "pytest>=8.2,<9.0",
   "ruff>=0.6,<1.0"
+]
+# Optional, and never imported unless OCR_PROVIDER=paddle_tesseract. PaddleOCR is a large native
+# dependency that frequently fails to install on Windows; with it absent the hybrid degrades to
+# whole-page Tesseract and says so on every result.
+paddle = [
+  "paddleocr>=2.7,<3.0",
+  "numpy>=1.26,<3.0"
 ]
 
 [tool.setuptools.packages.find]

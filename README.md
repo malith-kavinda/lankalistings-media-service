@@ -282,11 +282,32 @@ artifacts.
 Candidates, the item's status, its candidate count, and the batch projection are written in one commit, so
 a worker cannot die between creating candidates and recording that it did.
 
+### How a page is read
+
+OCR returns **blocks**, not a wall of text: each carries its text, its bounding box, its confidence,
+and where the box came from. That last field is why a candidate can cite the regions it was built
+from, and why a reviewer can be shown the exact part of the scan an answer was read out of.
+
+Block ids are assigned here, not taken from the engine. Tesseract's own numbering restarts per page,
+can be zero, and follows its segmentation rather than the columns a person reads; ids are computed
+1-based in column-then-down order instead, and the engine's value is kept in `source_ref` for
+tracing. **The persisted ids are authoritative** -- evidence validation compares a candidate's
+citations against the stored record, never a recomputed one.
+
+Preprocessing defaults were **measured**, not assumed. Across the ten corpus cases, greyscale and
+autocontrast left every block and every confidence figure identical, while denoising dropped mean
+confidence from 0.8932 to 0.8713 and thresholding to 0.8662. So orientation and greyscale are on,
+the rest are switches, and `preprocess_version` is recorded on every extraction so two results read
+under different settings are never silently compared.
+
+`tests/test_ocr_corpus.py` asserts the provider still reproduces every captured fixture block for
+block. `python -m tests.fixtures.capture_ocr` regenerates them through the same production code, so
+the corpus and the provider cannot drift apart.
+
 ### What is still to come
 
-- **Phase 2** replaces the OCR stage with a structured provider: blocks, bounding boxes, and per-word
-  confidence, switchable by `OCR_PROVIDER`.
-- **Phase 3** replaces the rule-based extractor -- which produces at most one candidate per page -- with
-  an LLM behind `LLM_PROVIDER`, which is what makes zero-to-many candidates real.
+- **Phase 3** replaces the rule-based extractor -- which produces at most one candidate per page --
+  with an LLM behind `LLM_PROVIDER`, which is what makes zero-to-many candidates real. It also
+  brings `OCR_PROVIDER=vision_llm`, which is recognised today and refused with a reason.
 - **Phase 4** rebuilds the management portal around bulk intake, batch progress, and multi-candidate
   review.

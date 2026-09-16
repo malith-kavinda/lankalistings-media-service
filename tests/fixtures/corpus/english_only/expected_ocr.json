@@ -2,9 +2,10 @@
   "engine": "tesseract",
   "engine_version": "5.4.0.20240606",
   "languages": "sin+eng",
+  "preprocess_version": "preprocess/v1",
   "width": 820,
   "height": 420,
-  "mean_confidence": 0.9551,
+  "mean_confidence": 0.9618,
   "block_count": 5,
   "text": "Three Bedroom House for Sale\nRs. 42,500,000\n\nNugegoda, Colombo District\n\nTwo storey, 12 perches, quiet lane,\n\nclose to schools and main road.\n\nContact 0112345678",
   "blocks": [
@@ -17,9 +18,11 @@
         497,
         70
       ],
-      "confidence": 0.9586,
+      "box_source": "engine",
+      "confidence": 0.9653,
       "line_count": 2,
-      "source_ref": "page=1;block=1;par=1"
+      "source_ref": "page=1;block=1;par=1",
+      "detector": "tesseract"
     },
     {
       "id": 2,
@@ -30,9 +33,11 @@
         319,
         24
       ],
-      "confidence": 0.94,
+      "box_source": "engine",
+      "confidence": 0.9465,
       "line_count": 1,
-      "source_ref": "page=1;block=1;par=2"
+      "source_ref": "page=1;block=1;par=2",
+      "detector": "tesseract"
     },
     {
       "id": 3,
@@ -43,9 +48,11 @@
         368,
         22
       ],
-      "confidence": 0.96,
+      "box_source": "engine",
+      "confidence": 0.9662,
       "line_count": 1,
-      "source_ref": "page=1;block=1;par=3"
+      "source_ref": "page=1;block=1;par=3",
+      "detector": "tesseract"
     },
     {
       "id": 4,
@@ -56,9 +63,11 @@
         331,
         17
       ],
-      "confidence": 0.9567,
+      "box_source": "engine",
+      "confidence": 0.9643,
       "line_count": 1,
-      "source_ref": "page=1;block=1;par=4"
+      "source_ref": "page=1;block=1;par=4",
+      "detector": "tesseract"
     },
     {
       "id": 5,
@@ -69,9 +78,12 @@
         233,
         19
       ],
-      "confidence": 0.96,
+      "box_source": "engine",
+      "confidence": 0.9665,
       "line_count": 1,
-      "source_ref": "page=1;block=1;par=5"
+      "source_ref": "page=1;block=1;par=5",
+      "detector": "tesseract"
     }
-  ]
+  ],
+  "low_confidence_threshold": 0.6
 }

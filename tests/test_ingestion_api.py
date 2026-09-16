@@ -288,3 +288,15 @@ def test_a_static_token_mode_without_a_token_stops_the_service_starting() -> Non
 def test_open_access_is_refused_outside_local_and_test() -> None:
     with pytest.raises(ValueError, match="only allowed in local and test"):
         create_app(settings=Settings(environment="production", operator_auth_mode="none"))
+
+
+# -- health ------------------------------------------------------------------------------------
+
+
+def test_health_names_the_configured_provider(api_client) -> None:
+    """"OCR is available" means something different per provider, so say which one is running."""
+    body = api_client.get("/health").json()["data"]
+
+    assert body["ocr_provider"] == "legacy"
+    assert body["ocr_available"] is True
+    assert body["ocr_unavailable_reason"] is None

@@ -2,9 +2,10 @@
   "engine": "tesseract",
   "engine_version": "5.4.0.20240606",
   "languages": "sin+eng",
+  "preprocess_version": "preprocess/v1",
   "width": 1000,
   "height": 560,
-  "mean_confidence": 0.9216,
+  "mean_confidence": 0.9265,
   "block_count": 6,
   "text": "Honda Fit 2014\nRs. 5,750,000\nKandy\n\nFull option, new tyres,\naccident free vehicle.\n0812233445\n\nඉඩම විකිණීමට\nපර්වස් 20\nමානර\n\nර. 1,800,000\n0412345678\n\nAccounts Clerk\nVacancy in Colombo 07\nExperience 2 years,\nsalary negotiable.\n\nApply 0114567890",
   "blocks": [
@@ -17,9 +18,11 @@
         198,
         90
       ],
-      "confidence": 0.9583,
+      "box_source": "engine",
+      "confidence": 0.9628,
       "line_count": 3,
-      "source_ref": "page=1;block=1;par=1"
+      "source_ref": "page=1;block=1;par=1",
+      "detector": "tesseract"
     },
     {
       "id": 2,
@@ -30,9 +33,11 @@
         192,
         76
       ],
-      "confidence": 0.9575,
+      "box_source": "engine",
+      "confidence": 0.9628,
       "line_count": 3,
-      "source_ref": "page=1;block=1;par=2"
+      "source_ref": "page=1;block=1;par=2",
+      "detector": "tesseract"
     },
     {
       "id": 3,
@@ -43,9 +48,11 @@
         202,
         89
       ],
-      "confidence": 0.904,
+      "box_source": "engine",
+      "confidence": 0.9088,
       "line_count": 3,
-      "source_ref": "page=1;block=2;par=1"
+      "source_ref": "page=1;block=2;par=1",
+      "detector": "tesseract"
     },
     {
       "id": 4,
@@ -56,9 +63,11 @@
         129,
         49
       ],
-      "confidence": 0.79,
+      "box_source": "engine",
+      "confidence": 0.7946,
       "line_count": 2,
-      "source_ref": "page=1;block=3;par=1"
+      "source_ref": "page=1;block=3;par=1",
+      "detector": "tesseract"
     },
     {
       "id": 5,
@@ -69,9 +78,11 @@
         229,
         117
       ],
-      "confidence": 0.96,
+      "box_source": "engine",
+      "confidence": 0.966,
       "line_count": 4,
-      "source_ref": "page=1;block=4;par=1"
+      "source_ref": "page=1;block=4;par=1",
+      "detector": "tesseract"
     },
     {
       "id": 6,
@@ -82,9 +93,12 @@
         180,
         20
       ],
-      "confidence": 0.96,
+      "box_source": "engine",
+      "confidence": 0.9642,
       "line_count": 1,
-      "source_ref": "page=1;block=4;par=2"
+      "source_ref": "page=1;block=4;par=2",
+      "detector": "tesseract"
     }
-  ]
+  ],
+  "low_confidence_threshold": 0.6
 }

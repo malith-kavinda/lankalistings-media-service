@@ -33,12 +33,15 @@ from media_service.jobs.dispatchers import InlineDispatcher, ManualDispatcher
 from media_service.jobs.local_pool import LocalPoolDispatcher
 from media_service.jobs.protocol import JobDispatcher, NullDispatcher
 from media_service.jobs.runner import ItemRunner
-from media_service.jobs.stages import EngineOcrStep, PillowPreprocessor, RuleBasedExtractor
+from media_service.jobs.stages import RuleBasedExtractor
+from media_service.ocr.compat import as_legacy_engine, as_provider
+from media_service.ocr.preprocess import ImagePreprocessor
+from media_service.ocr.registry import build_provider, preprocess_settings
 from media_service.services.advertisements import AdvertisementService
 from media_service.services.assets import AssetService
 from media_service.services.ingestion import IngestionService
 from media_service.services.media import MediaExtractionService
-from media_service.services.ocr import OcrEngine, TesseractOcrEngine
+from media_service.services.ocr import OcrEngine
 from media_service.storage import FilesystemAssetStore
 
 
@@ -54,11 +57,13 @@ def create_app(
     resolved_settings = settings or get_settings()
     resolved_settings.validate_startup()
 
-    resolved_ocr_engine = ocr_engine or TesseractOcrEngine(
-        tesseract_cmd=resolved_settings.tesseract_cmd,
-        language=resolved_settings.tesseract_lang,
-        tessdata_dir=resolved_settings.tesseract_data_dir,
+    # The provider is the real reader. The prototype's endpoints get it wrapped back into the
+    # older `OcrEngine` shape, so they keep working unchanged while the structured pipeline and the
+    # single-image path read pages the same way.
+    resolved_provider = (
+        as_provider(ocr_engine) if ocr_engine is not None else build_provider(resolved_settings)
     )
+    resolved_ocr_engine = ocr_engine or as_legacy_engine(resolved_provider)
     resolved_store = store or FilesystemAssetStore(resolved_settings.storage_root)
     resolved_unit_of_work = unit_of_work or UnitOfWorkFactory(
         build_session_factory(cached_engine(resolved_settings.database_url))
@@ -71,8 +76,8 @@ def create_app(
         unit_of_work=resolved_unit_of_work,
         store=resolved_store,
         settings=resolved_settings,
-        preprocess=PillowPreprocessor(max_pixels=resolved_settings.max_image_pixels),
-        ocr=EngineOcrStep(resolved_ocr_engine),
+        preprocess=ImagePreprocessor(preprocess_settings(resolved_settings)),
+        ocr=resolved_provider,
         extraction=RuleBasedExtractor(),
         gateway=LocalListingGateway(),
     )
@@ -98,6 +103,7 @@ def create_app(
     )
     app.state.settings = resolved_settings
     app.state.ocr_engine = resolved_ocr_engine
+    app.state.ocr_provider = resolved_provider
     app.state.unit_of_work = resolved_unit_of_work
     app.state.asset_store = resolved_store
     app.state.dispatcher = resolved_dispatcher

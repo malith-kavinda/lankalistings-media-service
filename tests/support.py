@@ -71,7 +71,7 @@ def uploads(count: int, *, prefix: str = "page") -> list[IncomingFile]:
 
 @dataclass
 class FakeOcrStep:
-    """An OCR stage whose output and failures a test chooses, and that counts its calls.
+    """An OCR provider whose output and failures a test chooses, counting its calls.
 
     The call count is the assertion that matters for resume: "this ran once across two attempts" is
     the whole point of keeping the artifacts.
@@ -80,21 +80,50 @@ class FakeOcrStep:
     text: str = "Ocean View Apartment Colombo 05 Rs. 4,500,000"
     fail_with: object | None = None
     calls: int = 0
+    blocks_per_page: int = 2
 
-    def run(self, image_bytes: bytes, *, content_type: str):  # type: ignore[no-untyped-def]
-        from media_service.jobs.stages import OcrResult
+    @property
+    def name(self) -> str:
+        return "fake"
+
+    def is_available(self) -> bool:
+        return True
+
+    def availability_reason(self) -> str | None:
+        return None
+
+    def extract(self, image_bytes: bytes, *, content_type: str):  # type: ignore[no-untyped-def]
+        from media_service.ocr.types import BoundingBox, BoxSource, OcrBlock, OcrResult
 
         self.calls += 1
         if self.fail_with is not None:
             raise self.fail_with
 
+        lines = self.text.split(" ") if self.text else []
+        chunk = max(len(lines) // max(self.blocks_per_page, 1), 1)
+        blocks = tuple(
+            OcrBlock(
+                id=index + 1,
+                text=" ".join(lines[index * chunk : (index + 1) * chunk]),
+                confidence=0.94,
+                box=BoundingBox(0, index * 20, 100, 18),
+                box_source=BoxSource.ENGINE,
+                source_ref=f"page=1;block={index + 1};par=1",
+                detector="fake",
+            )
+            for index in range(self.blocks_per_page)
+            if " ".join(lines[index * chunk : (index + 1) * chunk])
+        )
+
         return OcrResult(
             text=self.text,
+            blocks=blocks,
+            provider="fake",
             engine="fake",
             engine_version="fake/1.0",
             languages="sin+eng",
-            confidence_label="high",
             mean_confidence=0.94,
+            low_confidence=False,
             width=12,
             height=8,
             duration_ms=4,
@@ -112,6 +141,9 @@ class CountingExtractor:
         from media_service.domain.listings import CandidateDraft
 
         self.calls += 1
+        # Cites the blocks it was given, like the real extractors do. A double that produced
+        # uncited candidates would let a regression in citation handling pass unnoticed.
+        cited = tuple(block.id for block in result.blocks)
         return [
             CandidateDraft(
                 index=index,
@@ -121,6 +153,7 @@ class CountingExtractor:
                 location="Colombo",
                 price="Rs. 4,500,000",
                 source_text=result.text,
+                source_block_ids=cited,
             )
             for index in range(self.count)
         ]
@@ -128,13 +161,26 @@ class CountingExtractor:
 
 @dataclass
 class CountingPreprocessor:
+    """The real preprocessor, counting how often it actually ran."""
+
     calls: int = 0
 
+    @property
+    def version(self) -> str:
+        from media_service.ocr.preprocess import ImagePreprocessor
+
+        return ImagePreprocessor().version
+
+    def params(self) -> dict:
+        from media_service.ocr.preprocess import ImagePreprocessor
+
+        return ImagePreprocessor().params()
+
     def run(self, image_bytes: bytes):  # type: ignore[no-untyped-def]
-        from media_service.jobs.stages import PillowPreprocessor
+        from media_service.ocr.preprocess import ImagePreprocessor
 
         self.calls += 1
-        return PillowPreprocessor().run(image_bytes)
+        return ImagePreprocessor().run(image_bytes)
 
 
 @dataclass

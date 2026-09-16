@@ -36,14 +36,15 @@ from media_service.domain.item_state import ItemStatus, stage_of
 from media_service.domain.listings import CandidateDraft, ListingGateway
 from media_service.jobs.resume import ResumePlan, plan_resume
 from media_service.jobs.stages import (
-    PREPROCESS_PARAMS,
-    PREPROCESS_VERSION,
     ExtractionStep,
-    OcrResult,
-    OcrStep,
     PreprocessStep,
     StageError,
+    to_stage_error,
 )
+from media_service.ocr import quality
+from media_service.ocr.preprocess import PreprocessError
+from media_service.ocr.protocol import OcrProvider
+from media_service.ocr.types import BoundingBox, BoxSource, OcrBlock, OcrLine, OcrResult
 from media_service.storage import DerivativePurpose, FilesystemAssetStore, derivative_key
 from media_service.storage.filesystem import params_hash as compute_params_hash
 
@@ -80,7 +81,7 @@ class ItemRunner:
         store: FilesystemAssetStore,
         settings: Settings,
         preprocess: PreprocessStep,
-        ocr: OcrStep,
+        ocr: OcrProvider,
         extraction: ExtractionStep,
         gateway: ListingGateway,
     ) -> None:
@@ -91,8 +92,10 @@ class ItemRunner:
         self._ocr = ocr
         self._extraction = extraction
         self._gateway = gateway
+        # The derivative is keyed by the settings that produced it, so changing a preprocessing
+        # option produces a new file rather than overwriting one an existing extraction cites.
         self._params_hash = compute_params_hash(
-            DerivativePurpose.OCR_INPUT, PREPROCESS_VERSION, PREPROCESS_PARAMS
+            DerivativePurpose.OCR_INPUT, preprocess.version, preprocess.params()
         )
 
     def run(self, item_id: str, *, claim_token: str) -> None:
@@ -163,7 +166,10 @@ class ItemRunner:
             return plan.derivative_id
 
         original = self._read_bytes(context.storage_key)
-        result = self._preprocess.run(original)
+        try:
+            result = self._preprocess.run(original)
+        except PreprocessError as error:
+            raise to_stage_error(error) from error
         key = derivative_key(
             context.asset_id, DerivativePurpose.OCR_INPUT, self._params_hash, result.content_type
         )
@@ -203,7 +209,12 @@ class ItemRunner:
             )
 
         image_bytes = self._read_derivative(derivative_id)
-        result = self._ocr.run(image_bytes, content_type="image/png")
+        try:
+            result = self._ocr.extract(image_bytes, content_type="image/png")
+        except StageError:
+            raise
+        except Exception as error:  # noqa: BLE001 - translated, not swallowed
+            raise to_stage_error(error) from error
 
         with self._unit_of_work() as unit:
             extraction, _ = unit.artifacts.record_ocr(
@@ -214,17 +225,22 @@ class ItemRunner:
                     input_derivative_id=derivative_id,
                     generation=context.generation,
                     attempt=attempt,
-                    status="empty" if result.is_empty else "completed",
+                    # `empty` is a real outcome, not a failure: the page was read and carried
+                    # nothing worth extracting from.
+                    status="empty" if quality.is_empty(result.text) else "completed",
                     raw_text=result.text,
-                    blocks=result.blocks,
-                    block_count=len(result.blocks or []),
+                    blocks=result.block_documents(),
+                    block_count=result.block_count,
+                    max_block_id=result.max_block_id,
                     engine=result.engine,
                     engine_version=result.engine_version,
+                    traineddata_version=result.traineddata_version,
                     languages=result.languages,
                     mean_confidence=result.mean_confidence,
+                    low_confidence=result.low_confidence,
                     width=result.width,
                     height=result.height,
-                    preprocessing_version=PREPROCESS_VERSION,
+                    preprocessing_version=result.preprocess_version,
                     duration_ms=result.duration_ms,
                     completed_at=utcnow(),
                 )
@@ -493,18 +509,48 @@ def _drafts_from(response: dict[str, Any]) -> list[CandidateDraft]:
 
 
 def _result_from(extraction: OcrExtraction | None) -> OcrResult:
-    """Rebuild a stage result from a stored row, for a resume that skipped the OCR call."""
+    """Rebuild a result from the stored row, for a resume that skipped the OCR call.
+
+    The blocks come back from the database, not from a re-run, because **the persisted ids are
+    authoritative**. A candidate cites `source_block_ids`; recomputing them could renumber a region
+    and silently point an existing citation at different text.
+    """
     if extraction is None:  # pragma: no cover - the caller checked
         raise StageError("OCR_MISSING", "The OCR result is gone.", retryable=True)
     return OcrResult(
         text=extraction.raw_text,
+        blocks=_blocks_from(extraction.blocks),
+        provider=extraction.engine,
         engine=extraction.engine,
-        engine_version=extraction.engine_version or "",
+        engine_version=extraction.engine_version,
+        traineddata_version=extraction.traineddata_version,
         languages=extraction.languages,
-        confidence_label="medium",
         mean_confidence=extraction.mean_confidence,
+        low_confidence=extraction.low_confidence,
         width=extraction.width,
         height=extraction.height,
+        preprocess_version=extraction.preprocessing_version,
         duration_ms=extraction.duration_ms or 0,
-        blocks=extraction.blocks,
     )
+
+
+def _blocks_from(documents: list[Any] | None) -> tuple[OcrBlock, ...]:
+    """Read back the JSONB block document written by `OcrBlock.as_document`."""
+    blocks: list[OcrBlock] = []
+    for document in documents or []:
+        box = document.get("box")
+        blocks.append(
+            OcrBlock(
+                id=int(document.get("id", len(blocks) + 1)),
+                text=str(document.get("text", "")),
+                confidence=document.get("confidence"),
+                box=BoundingBox.from_list(box) if box else None,
+                box_source=BoxSource(document.get("box_source", BoxSource.NONE.value)),
+                lines=tuple(
+                    OcrLine(text=line) for line in str(document.get("text", "")).splitlines()
+                ),
+                source_ref=str(document.get("source_ref", "")),
+                detector=document.get("detector"),
+            )
+        )
+    return tuple(blocks)

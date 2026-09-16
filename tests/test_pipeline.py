@@ -15,7 +15,8 @@ from sqlalchemy import select
 from media_service.config import Settings
 from media_service.db.tables import Advertisement, LlmExtractionRun, MediaDerivative, OcrExtraction
 from media_service.domain.item_state import BatchStatus, ItemStatus
-from media_service.jobs.stages import PillowPreprocessor, StageError
+from media_service.jobs.stages import StageError
+from media_service.ocr.preprocess import ImagePreprocessor, PreprocessError, PreprocessSettings
 from tests.support import CountingExtractor, FakeOcrStep, build_pipeline, png_bytes, uploads
 
 pytestmark = pytest.mark.usefixtures("engine")
@@ -126,17 +127,55 @@ def test_preprocessing_writes_an_ocr_input_derivative(pipeline, session) -> None
 
     derivatives = session.scalars(select(MediaDerivative)).all()
     assert [derivative.purpose for derivative in derivatives] == ["ocr_input"]
-    assert derivatives[0].preprocessing_version == "preprocess/v0"
+    assert derivatives[0].preprocessing_version == "preprocess/v1"
+    # The settings that produced the file are stored beside it, so a later run with different
+    # options lands on a different key instead of overwriting this one.
+    assert derivatives[0].params["exif_transpose"] is True
 
 
 def test_the_preprocessor_refuses_an_image_above_the_pixel_cap() -> None:
     """The second line of defence, for bytes that never went through upload validation."""
-    with pytest.raises(StageError) as caught:
-        PillowPreprocessor(max_pixels=50).run(png_bytes(width=40, height=40))
+    from media_service.jobs.stages import to_stage_error
+
+    with pytest.raises(PreprocessError) as caught:
+        ImagePreprocessor(PreprocessSettings(max_pixels=50)).run(png_bytes(width=40, height=40))
 
     assert caught.value.code == "IMAGE_TOO_LARGE"
     # Not worth retrying: the image will be exactly as large next time.
-    assert caught.value.retryable is False
+    assert to_stage_error(caught.value).retryable is False
+
+
+def test_the_extraction_record_keeps_the_blocks_and_their_geometry(pipeline, session) -> None:
+    """The evidence a reviewer sees, and the ids a candidate cites, are stored not recomputed."""
+    _item(pipeline)
+
+    pipeline.run()
+
+    stored = session.scalars(select(OcrExtraction)).one()
+    assert stored.block_count == len(stored.blocks) > 0
+    assert stored.max_block_id == stored.block_count
+    assert stored.mean_confidence == 0.94
+    assert stored.low_confidence is False
+    first = stored.blocks[0]
+    assert first["id"] == 1
+    assert first["box"] == [0, 0, 100, 18]
+    assert first["box_source"] == "engine"
+    assert first["source_ref"].startswith("page=1;block=1")
+
+
+def test_a_candidate_cites_the_blocks_it_was_built_from(pipeline, unit_of_work) -> None:
+    progress, item = _item(pipeline)
+
+    pipeline.run()
+
+    with unit_of_work() as work:
+        candidate = work.candidates.list_for_item(item.id)[0]
+        cited = list(candidate.source_block_ids)
+        extraction = work.artifacts.completed_ocr(item_id=item.id, generation=1)
+        available = [block["id"] for block in extraction.blocks]
+
+    assert cited, "a candidate with no citations is unreviewable"
+    assert set(cited) <= set(available)
 
 
 # -- resume ------------------------------------------------------------------------------------
@@ -296,15 +335,15 @@ def test_one_failing_item_does_not_stop_the_rest_of_the_batch(
     progress = pipeline.service.create_batch(uploads(3), created_by=OPERATOR)
 
     failing = progress.items[1].id
-    original = pipeline.ocr.run
+    original = pipeline.ocr.extract
 
-    def run(image_bytes, *, content_type):  # type: ignore[no-untyped-def]
+    def extract(image_bytes, *, content_type):  # type: ignore[no-untyped-def]
         # Fail only the second item, identified by the one distinguishing thing a stage sees.
         if _claimed_item_id(pipeline) == failing:
             raise StageError("IMAGE_UNREADABLE", "Not an image.", retryable=False)
         return original(image_bytes, content_type=content_type)
 
-    pipeline.ocr.run = run  # type: ignore[method-assign]
+    pipeline.ocr.extract = extract  # type: ignore[method-assign]
     pipeline.run()
 
     finished = pipeline.service.get_batch(progress.id)

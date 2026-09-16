@@ -14,20 +14,30 @@ from media_service.api.schemas import (
 from media_service.domain.models import AdvertisementStatus
 from media_service.services.advertisements import AdvertisementService
 from media_service.services.media import MediaExtractionService
-from media_service.services.ocr import OcrEngine
 
 router = APIRouter()
 
 
 @router.get("/health")
 async def health(request: Request) -> dict[str, object]:
-    ocr_engine: OcrEngine = request.app.state.ocr_engine
+    """Report whether this instance can actually read a page.
+
+    Names the configured provider, because "OCR is available" means something different for each
+    one and an operator looking at a degraded deployment needs to know which is in use. The reason
+    string is written to be safe here: this endpoint is unauthenticated, so it says
+    "GEMINI_API_KEY is not set", never a value.
+
+    Availability is cached with a short TTL inside the provider. This used to spawn a Tesseract
+    subprocess on every request.
+    """
+    provider = request.app.state.ocr_provider
     return {
         "data": {
             "service": "media-service",
             "status": "ok",
-            "ocr_available": ocr_engine.is_available(),
-            "ocr_unavailable_reason": ocr_engine.availability_reason(),
+            "ocr_provider": provider.name,
+            "ocr_available": provider.is_available(),
+            "ocr_unavailable_reason": provider.availability_reason(),
         },
         "error": None,
     }

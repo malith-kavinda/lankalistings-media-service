@@ -2,9 +2,10 @@
   "engine": "tesseract",
   "engine_version": "5.4.0.20240606",
   "languages": "sin+eng",
+  "preprocess_version": "preprocess/v1",
   "width": 820,
   "height": 440,
-  "mean_confidence": 0.8656,
+  "mean_confidence": 0.8705,
   "block_count": 4,
   "text": "සුසුකි xGOGoSs 2015 විකිණීමට\n\nSuzuki Alto 800, manual, petrol\n\nමිල රු. 3,250,000 (සාකච්ඡා කළ හැක)\nLocation: Gampaha\n\nCall 0719876543",
   "blocks": [
@@ -17,9 +18,11 @@
         491,
         39
       ],
-      "confidence": 0.6775,
+      "box_source": "engine",
+      "confidence": 0.6799,
       "line_count": 1,
-      "source_ref": "page=1;block=1;par=1"
+      "source_ref": "page=1;block=1;par=1",
+      "detector": "tesseract"
     },
     {
       "id": 2,
@@ -30,9 +33,11 @@
         350,
         24
       ],
-      "confidence": 0.96,
+      "box_source": "engine",
+      "confidence": 0.9647,
       "line_count": 1,
-      "source_ref": "page=1;block=2;par=1"
+      "source_ref": "page=1;block=2;par=1",
+      "detector": "tesseract"
     },
     {
       "id": 3,
@@ -43,9 +48,11 @@
         478,
         61
       ],
-      "confidence": 0.905,
+      "box_source": "engine",
+      "confidence": 0.9095,
       "line_count": 2,
-      "source_ref": "page=1;block=2;par=2"
+      "source_ref": "page=1;block=2;par=2",
+      "detector": "tesseract"
     },
     {
       "id": 4,
@@ -56,9 +63,12 @@
         190,
         19
       ],
-      "confidence": 0.92,
+      "box_source": "engine",
+      "confidence": 0.9281,
       "line_count": 1,
-      "source_ref": "page=1;block=2;par=3"
+      "source_ref": "page=1;block=2;par=3",
+      "detector": "tesseract"
     }
-  ]
+  ],
+  "low_confidence_threshold": 0.6
 }

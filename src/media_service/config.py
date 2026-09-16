@@ -38,6 +38,7 @@ DEFAULT_CORS_ORIGINS = (
 OPERATOR_AUTH_MODES = ("none", "static_token")
 JOB_DISPATCH_MODES = ("local_pool", "inline", "manual", "none")
 MEDIA_REPOSITORIES = ("json", "sql")
+OCR_PROVIDERS = ("tesseract", "paddle_tesseract", "vision_llm")
 
 DEFAULT_MAX_IMAGES_PER_BATCH = 25
 DEFAULT_MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -66,6 +67,55 @@ def _env_int(name: str, default: int) -> int:
         raise ValueError(f"{name} must be an integer, got {raw!r}.") from exc
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number, got {raw!r}.") from exc
+
+
+def _env_optional_int(name: str) -> int | None:
+    """An unset value and an empty value both mean "off", not zero."""
+    raw = getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer or empty, got {raw!r}.") from exc
+
+
+def _env_path(name: str) -> Path | None:
+    raw = getenv(name)
+    return Path(raw) if raw and raw.strip() else None
+
+
+def _detect_tesseract_cmd() -> str | None:
+    explicit_path = getenv("TESSERACT_CMD")
+    if explicit_path:
+        return explicit_path
+
+    for path in WINDOWS_TESSERACT_PATHS:
+        if path.exists():
+            return str(path)
+
+    return None
+
+
+def _detect_tessdata_dir() -> Path | None:
+    explicit_path = getenv("TESSERACT_TESSDATA_DIR")
+    if explicit_path:
+        return Path(explicit_path)
+
+    if LOCAL_TESSDATA_DIR.exists():
+        return LOCAL_TESSDATA_DIR
+
+    return None
+
+
 class Settings(BaseModel):
     service_name: str = "media-service"
     api_prefix: str = "/api/v1"
@@ -73,9 +123,48 @@ class Settings(BaseModel):
 
     # OCR runtime
     max_upload_bytes: int = Field(default=DEFAULT_MAX_IMAGE_BYTES, gt=0)
-    tesseract_cmd: str | None = None
-    tesseract_lang: str = "sin+eng"
-    tesseract_data_dir: Path | None = None
+    # Detected rather than defaulted to None, so `Settings()` and `get_settings()` agree about
+    # where Tesseract is. A model default that disagreed with the environment default is the bug
+    # this module's docstring already records once; it would be worse here, because the symptom is
+    # "OCR is unavailable" in tests and nowhere else.
+    tesseract_cmd: str | None = Field(default_factory=_detect_tesseract_cmd)
+    tesseract_data_dir: Path | None = Field(default_factory=_detect_tessdata_dir)
+
+    # OCR selection and shared policy. `ocr_languages` is the single source of truth for what the
+    # engine is asked to read; there is no second language setting to disagree with it.
+    ocr_provider: str = "tesseract"
+    ocr_languages: str = "sin+eng"
+    ocr_concurrency: int = Field(default=2, gt=0)
+    ocr_timeout_seconds: float = Field(default=60.0, gt=0)
+    ocr_empty_text_min_chars: int = Field(default=8, ge=0)
+    ocr_low_confidence_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
+    ocr_preprocess_version: str = "preprocess/v1"
+
+    # Preprocessing. Orientation is always applied; the rest default off because they were measured
+    # against the regression corpus and only orientation and greyscale left it unchanged --
+    # denoising and thresholding both lowered mean confidence on clean scans.
+    ocr_preprocess_grayscale: bool = True
+    ocr_preprocess_autocontrast: bool = False
+    ocr_preprocess_denoise: bool = False
+    ocr_preprocess_threshold: int | None = None
+    ocr_preprocess_deskew: bool = False
+
+    # Tesseract. 3/3 is automatic page segmentation with the LSTM engine, the only one with a
+    # Sinhala model.
+    ocr_tesseract_psm: int = Field(default=3, ge=0, le=13)
+    ocr_tesseract_oem: int = Field(default=3, ge=0, le=3)
+    # 6 is "one uniform block of text", which is what a detected region is. Asking for full page
+    # segmentation inside a crop makes Tesseract hunt for columns that are not there.
+    ocr_tesseract_region_psm: int = Field(default=6, ge=0, le=13)
+
+    # Paddle hybrid: detection only. PaddleOCR has no Sinhala recognition model, so Tesseract does
+    # every recognition and Paddle only proposes regions.
+    ocr_paddle_model_dir: Path | None = None
+    ocr_paddle_device: str = "cpu"
+    ocr_paddle_box_thresh: float = Field(default=0.5, ge=0.0, le=1.0)
+    ocr_paddle_merge_iou: float = Field(default=0.1, ge=0.0, le=1.0)
+    ocr_paddle_max_regions: int = Field(default=40, gt=0)
+    ocr_paddle_fallback_to_tesseract: bool = True
 
     # Batch limits (PRD 15.1)
     max_images_per_batch: int = Field(default=DEFAULT_MAX_IMAGES_PER_BATCH, gt=0)
@@ -139,33 +228,18 @@ class Settings(BaseModel):
                 f"MEDIA_REPOSITORY={self.media_repository!r} is not one of "
                 f"{', '.join(sorted(MEDIA_REPOSITORIES))}."
             )
+        if self.ocr_provider not in OCR_PROVIDERS:
+            # Dies at startup with the valid list rather than silently falling back to Tesseract.
+            # A typo that quietly selects a different engine changes every extraction the service
+            # produces, and nothing in the output would say so.
+            raise ValueError(
+                f"OCR_PROVIDER={self.ocr_provider!r} is not one of "
+                f"{', '.join(sorted(OCR_PROVIDERS))}."
+            )
         if self.operator_auth_mode == "none" and not self.is_local_or_test:
             raise ValueError(
                 "OPERATOR_AUTH_MODE=none is only allowed in local and test environments."
             )
-
-
-def _detect_tesseract_cmd() -> str | None:
-    explicit_path = getenv("TESSERACT_CMD")
-    if explicit_path:
-        return explicit_path
-
-    for path in WINDOWS_TESSERACT_PATHS:
-        if path.exists():
-            return str(path)
-
-    return None
-
-
-def _detect_tessdata_dir() -> Path | None:
-    explicit_path = getenv("TESSERACT_TESSDATA_DIR")
-    if explicit_path:
-        return Path(explicit_path)
-
-    if LOCAL_TESSDATA_DIR.exists():
-        return LOCAL_TESSDATA_DIR
-
-    return None
 
 
 @lru_cache
@@ -178,9 +252,29 @@ def get_settings() -> Settings:
     return Settings(
         environment=getenv("MEDIA_SERVICE_ENV", "local"),
         max_upload_bytes=_env_int("MEDIA_SERVICE_MAX_UPLOAD_BYTES", DEFAULT_MAX_IMAGE_BYTES),
-        tesseract_cmd=_detect_tesseract_cmd(),
-        tesseract_lang=getenv("TESSERACT_LANG", "sin+eng"),
-        tesseract_data_dir=_detect_tessdata_dir(),
+        ocr_provider=getenv("OCR_PROVIDER", "tesseract"),
+        # TESSERACT_LANG is the name the prototype documented; OCR_LANGUAGES is the one the
+        # provider layer uses. Reading both keeps existing deployments working.
+        ocr_languages=getenv("OCR_LANGUAGES", getenv("TESSERACT_LANG", "sin+eng")),
+        ocr_concurrency=_env_int("OCR_CONCURRENCY", 2),
+        ocr_timeout_seconds=_env_float("OCR_TIMEOUT_SECONDS", 60.0),
+        ocr_empty_text_min_chars=_env_int("OCR_EMPTY_TEXT_MIN_CHARS", 8),
+        ocr_low_confidence_threshold=_env_float("OCR_LOW_CONFIDENCE_THRESHOLD", 0.60),
+        ocr_preprocess_version=getenv("OCR_PREPROCESS_VERSION", "preprocess/v1"),
+        ocr_preprocess_grayscale=_env_bool("OCR_PREPROCESS_GRAYSCALE", True),
+        ocr_preprocess_autocontrast=_env_bool("OCR_PREPROCESS_AUTOCONTRAST", False),
+        ocr_preprocess_denoise=_env_bool("OCR_PREPROCESS_DENOISE", False),
+        ocr_preprocess_threshold=_env_optional_int("OCR_PREPROCESS_THRESHOLD"),
+        ocr_preprocess_deskew=_env_bool("OCR_PREPROCESS_DESKEW", False),
+        ocr_tesseract_psm=_env_int("OCR_TESSERACT_PSM", 3),
+        ocr_tesseract_oem=_env_int("OCR_TESSERACT_OEM", 3),
+        ocr_tesseract_region_psm=_env_int("OCR_TESSERACT_REGION_PSM", 6),
+        ocr_paddle_model_dir=_env_path("OCR_PADDLE_MODEL_DIR"),
+        ocr_paddle_device=getenv("OCR_PADDLE_DEVICE", "cpu"),
+        ocr_paddle_box_thresh=_env_float("OCR_PADDLE_BOX_THRESH", 0.5),
+        ocr_paddle_merge_iou=_env_float("OCR_PADDLE_MERGE_IOU", 0.1),
+        ocr_paddle_max_regions=_env_int("OCR_PADDLE_MAX_REGIONS", 40),
+        ocr_paddle_fallback_to_tesseract=_env_bool("OCR_PADDLE_FALLBACK_TO_TESSERACT", True),
         max_images_per_batch=_env_int("MAX_IMAGES_PER_BATCH", DEFAULT_MAX_IMAGES_PER_BATCH),
         max_image_bytes=_env_int("MAX_IMAGE_BYTES", DEFAULT_MAX_IMAGE_BYTES),
         max_batch_bytes=_env_int("MAX_BATCH_BYTES", DEFAULT_MAX_BATCH_BYTES),

@@ -2,9 +2,10 @@
   "engine": "tesseract",
   "engine_version": "5.4.0.20240606",
   "languages": "sin+eng",
+  "preprocess_version": "preprocess/v1",
   "width": 820,
   "height": 420,
-  "mean_confidence": 0.576,
+  "mean_confidence": 0.5807,
   "block_count": 3,
   "text": "ටණායණාටා ජූරියස්2016\nමිල රු. 8,500,000\n\nකණාළඹ 03\n\nQDI NEE නනත්වයම- වාහනයකි\nCOMO) 0771234567",
   "blocks": [
@@ -17,9 +18,11 @@
         454,
         82
       ],
-      "confidence": 0.768,
+      "box_source": "engine",
+      "confidence": 0.773,
       "line_count": 2,
-      "source_ref": "page=1;block=1;par=1"
+      "source_ref": "page=1;block=1;par=1",
+      "detector": "tesseract"
     },
     {
       "id": 2,
@@ -30,9 +33,11 @@
         157,
         27
       ],
-      "confidence": 0.48,
+      "box_source": "engine",
+      "confidence": 0.4825,
       "line_count": 1,
-      "source_ref": "page=1;block=1;par=2"
+      "source_ref": "page=1;block=1;par=2",
+      "detector": "tesseract"
     },
     {
       "id": 3,
@@ -43,9 +48,12 @@
         422,
         68
       ],
-      "confidence": 0.48,
+      "box_source": "engine",
+      "confidence": 0.4865,
       "line_count": 2,
-      "source_ref": "page=1;block=1;par=3"
+      "source_ref": "page=1;block=1;par=3",
+      "detector": "tesseract"
     }
-  ]
+  ],
+  "low_confidence_threshold": 0.6
 }
