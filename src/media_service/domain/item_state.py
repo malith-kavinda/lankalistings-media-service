@@ -63,15 +63,31 @@ STAGE_OF: Final[dict[ItemStatus, Stage]] = {
 # again; an item waiting to retry is `uploaded` with a non-zero attempt count and a future
 # run_after. Reprocessing a finished item is allowed only through the explicit reprocess path,
 # which is why `completed`, `no_ads`, and `awaiting_review` can also return to `uploaded`.
+#
+# Each in-flight state can also return to `uploaded`. That edge is *requeue after abnormal
+# termination*: a worker was killed or its lease expired, so the row is claimable again. It is not a
+# retry -- nobody asked for it and no review event is written -- which is why the repository exposes
+# it as one named operation (`requeue_abandoned`) rather than as a general transition anyone may
+# take.
 ITEM_TRANSITIONS: Final[dict[ItemStatus, frozenset[ItemStatus]]] = {
     ItemStatus.UPLOADED: frozenset(
         {ItemStatus.PREPROCESSING, ItemStatus.NEEDS_ATTENTION, ItemStatus.FAILED}
     ),
     ItemStatus.PREPROCESSING: frozenset(
-        {ItemStatus.OCR_PROCESSING, ItemStatus.NEEDS_ATTENTION, ItemStatus.FAILED}
+        {
+            ItemStatus.OCR_PROCESSING,
+            ItemStatus.NEEDS_ATTENTION,
+            ItemStatus.FAILED,
+            ItemStatus.UPLOADED,
+        }
     ),
     ItemStatus.OCR_PROCESSING: frozenset(
-        {ItemStatus.LLM_PROCESSING, ItemStatus.NEEDS_ATTENTION, ItemStatus.FAILED}
+        {
+            ItemStatus.LLM_PROCESSING,
+            ItemStatus.NEEDS_ATTENTION,
+            ItemStatus.FAILED,
+            ItemStatus.UPLOADED,
+        }
     ),
     ItemStatus.LLM_PROCESSING: frozenset(
         {
@@ -79,6 +95,7 @@ ITEM_TRANSITIONS: Final[dict[ItemStatus, frozenset[ItemStatus]]] = {
             ItemStatus.NO_ADS,
             ItemStatus.NEEDS_ATTENTION,
             ItemStatus.FAILED,
+            ItemStatus.UPLOADED,
         }
     ),
     ItemStatus.AWAITING_REVIEW: frozenset({ItemStatus.COMPLETED, ItemStatus.UPLOADED}),
