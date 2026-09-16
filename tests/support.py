@@ -67,3 +67,123 @@ def uploads(count: int, *, prefix: str = "page") -> list[IncomingFile]:
         )
         for index in range(count)
     ]
+
+
+@dataclass
+class FakeOcrStep:
+    """An OCR stage whose output and failures a test chooses, and that counts its calls.
+
+    The call count is the assertion that matters for resume: "this ran once across two attempts" is
+    the whole point of keeping the artifacts.
+    """
+
+    text: str = "Ocean View Apartment Colombo 05 Rs. 4,500,000"
+    fail_with: object | None = None
+    calls: int = 0
+
+    def run(self, image_bytes: bytes, *, content_type: str):  # type: ignore[no-untyped-def]
+        from media_service.jobs.stages import OcrResult
+
+        self.calls += 1
+        if self.fail_with is not None:
+            raise self.fail_with
+
+        return OcrResult(
+            text=self.text,
+            engine="fake",
+            engine_version="fake/1.0",
+            languages="sin+eng",
+            confidence_label="high",
+            mean_confidence=0.94,
+            width=12,
+            height=8,
+            duration_ms=4,
+        )
+
+
+@dataclass
+class CountingExtractor:
+    """Produces a fixed number of candidates and records how often it was asked."""
+
+    count: int = 1
+    calls: int = 0
+
+    def run(self, result):  # type: ignore[no-untyped-def]
+        from media_service.domain.listings import CandidateDraft
+
+        self.calls += 1
+        return [
+            CandidateDraft(
+                index=index,
+                title=f"Advertisement {index}",
+                description="Extracted body text",
+                category="property",
+                location="Colombo",
+                price="Rs. 4,500,000",
+                source_text=result.text,
+            )
+            for index in range(self.count)
+        ]
+
+
+@dataclass
+class CountingPreprocessor:
+    calls: int = 0
+
+    def run(self, image_bytes: bytes):  # type: ignore[no-untyped-def]
+        from media_service.jobs.stages import PillowPreprocessor
+
+        self.calls += 1
+        return PillowPreprocessor().run(image_bytes)
+
+
+@dataclass
+class Pipeline:
+    """Everything wired together, with the fakes still reachable for assertions."""
+
+    service: object
+    dispatcher: object
+    runner: object
+    preprocess: CountingPreprocessor
+    ocr: FakeOcrStep
+    extraction: CountingExtractor
+    unit_of_work: object
+
+    def run(self) -> int:
+        return self.dispatcher.run_once()  # type: ignore[attr-defined]
+
+
+def build_pipeline(*, unit_of_work, store, settings, ocr=None, extraction=None):  # type: ignore[no-untyped-def]
+    from media_service.domain.listings import LocalListingGateway
+    from media_service.jobs.dispatchers import ManualDispatcher
+    from media_service.jobs.runner import ItemRunner
+    from media_service.services.ingestion import IngestionService
+
+    preprocess = CountingPreprocessor()
+    ocr_step = ocr or FakeOcrStep()
+    extraction_step = extraction or CountingExtractor()
+
+    runner = ItemRunner(
+        unit_of_work=unit_of_work,
+        store=store,
+        settings=settings,
+        preprocess=preprocess,
+        ocr=ocr_step,
+        extraction=extraction_step,
+        gateway=LocalListingGateway(),
+    )
+    dispatcher = ManualDispatcher(
+        unit_of_work=unit_of_work, runner=runner, lease_seconds=settings.lease_seconds
+    )
+    service = IngestionService(
+        unit_of_work=unit_of_work, store=store, settings=settings, dispatcher=dispatcher
+    )
+    return Pipeline(
+        service=service,
+        dispatcher=dispatcher,
+        runner=runner,
+        preprocess=preprocess,
+        ocr=ocr_step,
+        extraction=extraction_step,
+        unit_of_work=unit_of_work,
+    )

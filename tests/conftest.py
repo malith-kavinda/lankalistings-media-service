@@ -177,3 +177,12 @@ def ingestion_service(unit_of_work, asset_store, ingestion_settings, dispatcher)
         settings=ingestion_settings,
         dispatcher=dispatcher,
     )
+
+
+@pytest.fixture
+def pipeline(unit_of_work, asset_store, ingestion_settings):  # type: ignore[no-untyped-def]
+    from tests.support import build_pipeline
+
+    return build_pipeline(
+        unit_of_work=unit_of_work, store=asset_store, settings=ingestion_settings
+    )
