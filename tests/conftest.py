@@ -136,3 +136,44 @@ def isolated_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     reset_settings_cache()
     yield
     reset_settings_cache()
+
+
+@pytest.fixture
+def asset_store(tmp_path):  # type: ignore[no-untyped-def]
+    from media_service.storage import FilesystemAssetStore
+
+    return FilesystemAssetStore(tmp_path / "media")
+
+
+@pytest.fixture
+def unit_of_work(session_factory):  # type: ignore[no-untyped-def]
+    from media_service.db.uow import UnitOfWorkFactory
+
+    return UnitOfWorkFactory(session_factory)
+
+
+@pytest.fixture
+def dispatcher():  # type: ignore[no-untyped-def]
+    """Records what the service asked for without running anything."""
+    from tests.support import RecordingDispatcher
+
+    return RecordingDispatcher()
+
+
+@pytest.fixture
+def ingestion_settings():  # type: ignore[no-untyped-def]
+    from media_service.config import Settings
+
+    return Settings()
+
+
+@pytest.fixture
+def ingestion_service(unit_of_work, asset_store, ingestion_settings, dispatcher):  # type: ignore[no-untyped-def]
+    from media_service.services.ingestion import IngestionService
+
+    return IngestionService(
+        unit_of_work=unit_of_work,
+        store=asset_store,
+        settings=ingestion_settings,
+        dispatcher=dispatcher,
+    )
