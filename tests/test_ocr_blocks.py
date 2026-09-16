@@ -173,3 +173,41 @@ def test_page_text_separates_blocks_by_a_blank_line() -> None:
     )
 
     assert assembly.page_text(assembled) == "Left\n\nRight"
+
+
+# -- multi-page input --------------------------------------------------------------------------
+
+
+def test_pages_are_ordered_as_pages_not_merged_into_one_coordinate_space() -> None:
+    """A multi-frame TIFF makes Tesseract emit rows per frame, each with its own origin.
+
+    Sorting them together would interleave blocks from physically different pages wherever their
+    frame-local coordinates happen to collide.
+    """
+    words = [
+        word("PageTwoLeft", left=10, top=10, block=1, paragraph=1, line=1),
+        word("PageOneRight", left=700, top=10, block=2, paragraph=1, line=1),
+    ]
+    words[0].page = 2
+    words[1].page = 1
+
+    assembled = assembly.assemble(words, page_width=1000)
+
+    # Page 1 first, however far right its block sits on its own page.
+    assert [block.text for block in assembled] == ["PageOneRight", "PageTwoLeft"]
+    assert [block.id for block in assembled] == [1, 2]
+
+
+def test_ids_stay_globally_sequential_across_pages() -> None:
+    """A citation refers to a document, not to a position within one of its pages."""
+    words = []
+    for page in (1, 2):
+        for column, left in enumerate((10, 700)):
+            row = word(f"p{page}c{column}", left=left, top=10, block=column + 1)
+            row.page = page
+            words.append(row)
+
+    assembled = assembly.assemble(words, page_width=1000)
+
+    assert [block.id for block in assembled] == [1, 2, 3, 4]
+    assert [block.text for block in assembled] == ["p1c0", "p1c1", "p2c0", "p2c1"]

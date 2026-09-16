@@ -27,13 +27,13 @@ DEADLINE_SECONDS = 20.0
 
 
 def _fast_settings(**overrides) -> Settings:  # type: ignore[no-untyped-def]
-    return Settings(
-        worker_concurrency=2,
-        poll_interval_ms=25,
-        reaper_interval_ms=50,
-        lease_seconds=30,
-        **overrides,
-    )
+    defaults = {
+        "worker_concurrency": 2,
+        "poll_interval_ms": 25,
+        "reaper_interval_ms": 50,
+        "lease_seconds": 30,
+    }
+    return Settings(**{**defaults, **overrides})
 
 
 def _build(unit_of_work, asset_store, settings):  # type: ignore[no-untyped-def]
@@ -186,3 +186,87 @@ def test_a_multi_instance_worker_leaves_other_claims_alone(unit_of_work, asset_s
         assert service.get_item(item_id).status is ItemStatus.PREPROCESSING
     finally:
         dispatcher.stop(timeout=5)
+
+
+# -- OCR concurrency ---------------------------------------------------------------------------
+
+
+def test_ocr_concurrency_gates_the_engine_independently_of_worker_count(
+    unit_of_work, asset_store
+) -> None:
+    """The knob an operator turns down to protect a CPU-bound recogniser.
+
+    `MAX_WORKER_CONCURRENCY` is how many items may be in flight; `OCR_CONCURRENCY` is how many may
+    be inside the engine at once. Four workers, one OCR slot: the pipeline keeps moving and the
+    engine still only ever sees one page.
+    """
+    import threading
+
+    from media_service.domain.listings import LocalListingGateway
+    from media_service.ocr.types import OcrResult
+
+    inside = 0
+    peak = 0
+    guard = threading.Lock()
+
+    class ConcurrencyWatchingProvider:
+        name = "watching"
+
+        def is_available(self) -> bool:
+            return True
+
+        def availability_reason(self) -> str | None:
+            return None
+
+        def extract(self, image_bytes, *, content_type):  # type: ignore[no-untyped-def]
+            nonlocal inside, peak
+            with guard:
+                inside += 1
+                peak = max(peak, inside)
+            time.sleep(0.03)
+            with guard:
+                inside -= 1
+            return OcrResult(text="Ocean View Apartment Colombo", mean_confidence=0.9)
+
+    settings = _fast_settings(worker_concurrency=4, ocr_concurrency=1)
+    runner = ItemRunner(
+        unit_of_work=unit_of_work,
+        store=asset_store,
+        settings=settings,
+        preprocess=CountingPreprocessor(),
+        ocr=ConcurrencyWatchingProvider(),
+        extraction=CountingExtractor(),
+        gateway=LocalListingGateway(),
+    )
+    dispatcher = LocalPoolDispatcher(
+        unit_of_work=unit_of_work, runner=runner, settings=settings, worker_id="ocr-gate"
+    )
+    service = IngestionService(
+        unit_of_work=unit_of_work, store=asset_store, settings=settings, dispatcher=dispatcher
+    )
+
+    dispatcher.start()
+    try:
+        progress = service.create_batch(uploads(4), created_by=OPERATOR)
+        _await_status(service, progress.id, BatchStatus.COMPLETED)
+    finally:
+        dispatcher.stop(timeout=5)
+
+    assert peak == 1, f"{peak} pages were inside the engine at once"
+
+
+def test_the_runner_takes_its_ocr_slots_from_configuration(unit_of_work, asset_store) -> None:
+    from media_service.domain.listings import LocalListingGateway
+
+    settings = _fast_settings(ocr_concurrency=3)
+    runner = ItemRunner(
+        unit_of_work=unit_of_work,
+        store=asset_store,
+        settings=settings,
+        preprocess=CountingPreprocessor(),
+        ocr=FakeOcrStep(),
+        extraction=CountingExtractor(),
+        gateway=LocalListingGateway(),
+    )
+
+    assert runner._ocr_semaphore._value == 3  # noqa: SLF001

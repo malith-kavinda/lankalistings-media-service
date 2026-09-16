@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import Final
 
+from media_service.ocr.blocks import COLUMN_GAP_RATIO
 from media_service.ocr.types import BoundingBox
 
 # A gap wider than this many line heights starts a new region. Tuned to sit between the intra-ad
@@ -85,10 +86,15 @@ def merge_lines(
 
 
 def reading_order_boxes(boxes: list[BoundingBox], *, page_width: int) -> list[BoundingBox]:
-    """Column band, then down the band -- the same order block assembly uses."""
+    """Column band, then down the band -- the same order block assembly uses.
+
+    Shares `COLUMN_GAP_RATIO` with it rather than repeating the number. Two copies that agree today
+    would let a later tuning change desync the hybrid's reading order from the plain provider's,
+    and nothing would catch it.
+    """
     if not boxes:
         return []
-    threshold = max(1, int(page_width * 0.15))
+    threshold = max(1, int(page_width * COLUMN_GAP_RATIO))
     by_left = sorted(boxes, key=lambda box: box.left)
 
     columns: list[list[BoundingBox]] = [[by_left[0]]]

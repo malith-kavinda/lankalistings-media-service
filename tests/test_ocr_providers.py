@@ -6,6 +6,8 @@ testable without the engines behind them.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from media_service.api.errors import OcrUnavailableError
@@ -406,3 +408,45 @@ def test_ocr_warnings_reach_the_candidate() -> None:
 
     assert "OCR_LOW_CONFIDENCE" in draft.warning_codes
     assert draft.confidence_label == "low"
+
+
+# -- concurrency -------------------------------------------------------------------------------
+
+
+def test_paddle_inference_is_serialised_across_threads() -> None:
+    """A PaddleInference predictor is one native object and is not safe for concurrent calls.
+
+    The worker pool drives several threads through a single detector, so the lock has to cover
+    inference and not only construction.
+    """
+    import threading
+
+    from media_service.ocr.providers.paddle_tesseract import PaddleTextDetector
+
+    inside = 0
+    peak = 0
+    guard = threading.Lock()
+
+    class SlowEngine:
+        def ocr(self, array, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal inside, peak
+            with guard:
+                inside += 1
+                peak = max(peak, inside)
+            time.sleep(0.02)
+            with guard:
+                inside -= 1
+            return []
+
+    detector = PaddleTextDetector()
+    engine = SlowEngine()
+    threads = [
+        threading.Thread(target=detector._infer, args=(engine, None))  # noqa: SLF001
+        for _ in range(4)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert peak == 1, f"{peak} threads were inside the predictor at once"

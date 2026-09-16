@@ -20,6 +20,7 @@ work it no longer owns.
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from hashlib import sha256
@@ -84,10 +85,17 @@ class ItemRunner:
         ocr: OcrProvider,
         extraction: ExtractionStep,
         gateway: ListingGateway,
+        ocr_semaphore: threading.Semaphore | None = None,
     ) -> None:
         self._unit_of_work = unit_of_work
         self._store = store
         self._settings = settings
+        # OCR concurrency is gated separately from worker concurrency, because they answer
+        # different questions. `MAX_WORKER_CONCURRENCY` is how many items may be in flight;
+        # `OCR_CONCURRENCY` is how many may be inside the engine at once -- which is what an
+        # operator turns down to protect a CPU-bound or rate-limited recogniser without throttling
+        # the rest of the pipeline.
+        self._ocr_semaphore = ocr_semaphore or threading.Semaphore(settings.ocr_concurrency)
         self._preprocess = preprocess
         self._ocr = ocr
         self._extraction = extraction
@@ -210,7 +218,8 @@ class ItemRunner:
 
         image_bytes = self._read_derivative(derivative_id)
         try:
-            result = self._ocr.extract(image_bytes, content_type="image/png")
+            with self._ocr_semaphore:
+                result = self._ocr.extract(image_bytes, content_type="image/png")
         except StageError:
             raise
         except Exception as error:  # noqa: BLE001 - translated, not swallowed

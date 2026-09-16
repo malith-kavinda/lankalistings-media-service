@@ -150,6 +150,23 @@ class TesseractOcrProvider:
             raise OcrUnavailableError(reason)
 
         width, height = self._dimensions(image_bytes)
+        if width is None or height is None:
+            # Ordering needs the page width, and without it the column threshold collapses to a
+            # pixel and reading order silently becomes left-to-right. Refusing is honest: bytes
+            # that will not decode are not a page this service can read.
+            raise ServiceError(
+                status_code=422,
+                code="VALIDATION_FAILED",
+                message="Request validation failed.",
+                details=[
+                    {
+                        "field": "file",
+                        "code": "UNREADABLE_IMAGE",
+                        "message": "The image could not be decoded.",
+                    }
+                ],
+            )
+
         started = time.monotonic()
         tsv = self._cli.image_to_tsv(
             image_bytes, suffix=EXTENSION_BY_TYPE.get(content_type, ".png")
@@ -159,7 +176,7 @@ class TesseractOcrProvider:
         words = block_assembly.words_from_tesseract(as_word_data(parse_tsv(tsv)))
         assembled = block_assembly.assemble(
             words,
-            page_width=width or 1,
+            page_width=width,
             box_source=BoxSource.ENGINE,
             detector=PROVIDER_NAME,
         )

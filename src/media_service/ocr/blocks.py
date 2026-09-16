@@ -190,9 +190,42 @@ def assemble(
     box_source: BoxSource = BoxSource.ENGINE,
     detector: str | None = None,
 ) -> tuple[OcrBlock, ...]:
-    """Words in, ordered and numbered blocks out."""
+    """Words in, ordered and numbered blocks out.
+
+    Ordering runs **per page**, then pages are concatenated in order. A multi-frame TIFF makes
+    Tesseract emit rows for every frame, each with its own origin, and sorting them together would
+    interleave blocks from physically different pages wherever their frame-local coordinates happen
+    to collide. Ids stay globally sequential across the whole document, because that is what a
+    citation refers to.
+    """
     grouped = group_into_blocks(words, box_source=box_source, detector=detector)
-    return assign_ids(reading_order(grouped, page_width=page_width))
+    if len(grouped) < 2:
+        return assign_ids(grouped)
+
+    by_page: dict[int, list[OcrBlock]] = {}
+    for block in grouped:
+        by_page.setdefault(_page_of(block), []).append(block)
+
+    ordered: list[OcrBlock] = []
+    for page in sorted(by_page):
+        ordered.extend(reading_order(by_page[page], page_width=page_width))
+    return assign_ids(ordered)
+
+
+def _page_of(block: OcrBlock) -> int:
+    """The engine's page number, read back from the reference the block already carries.
+
+    Kept out of `OcrBlock` deliberately: a stored `page` field would change the persisted document
+    shape for every result, and every page this service actually ingests is a single image.
+    """
+    for part in block.source_ref.split(";"):
+        name, separator, value = part.partition("=")
+        if separator and name == "page":
+            try:
+                return int(value)
+            except ValueError:
+                return 1
+    return 1
 
 
 def page_text(blocks: tuple[OcrBlock, ...] | list[OcrBlock]) -> str:

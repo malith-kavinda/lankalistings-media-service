@@ -73,6 +73,7 @@ class PaddleTextDetector:
         self._box_threshold = box_threshold
         self._engine: Any | None = None
         self._lock = threading.Lock()
+        self._inference_lock = threading.Lock()
 
     def availability_reason(self) -> str | None:
         # find_spec reads package metadata; it does not execute the package.
@@ -82,13 +83,31 @@ class PaddleTextDetector:
 
     def detect(self, image_bytes: bytes) -> list[BoundingBox]:
         engine = self._detector()
+        return _boxes_from_paddle(self._infer(engine, self._as_array(image_bytes)))
+
+    def _infer(self, engine: Any, array: Any) -> Any:
+        """Run detection, one caller at a time.
+
+        Serialised deliberately, and not only during construction. A PaddleInference predictor is a
+        single native object and is not safe to call from several threads at once -- the guidance is
+        one predictor per thread, or an explicit clone. The worker pool drives `worker_concurrency`
+        threads through this one detector, so without this lock two items would enter the same
+        predictor together and risk a crash or, worse, geometry that is quietly wrong. Geometry is
+        exactly what must not be quietly wrong here: it becomes the region boxes behind block ids,
+        and block ids are what candidates cite.
+
+        Serialising detection costs little, because it is the cheap half. Recognition still runs
+        concurrently -- each region is read by its own Tesseract process.
+        """
+        with self._inference_lock:
+            return engine.ocr(array, det=True, rec=False, cls=False)
+
+    @staticmethod
+    def _as_array(image_bytes: bytes) -> Any:
         with Image.open(BytesIO(image_bytes)) as image:
             import numpy  # noqa: PLC0415 - only reachable when paddleocr is installed
 
-            array = numpy.array(image.convert("RGB"))
-
-        detected = engine.ocr(array, det=True, rec=False, cls=False)
-        return _boxes_from_paddle(detected)
+            return numpy.array(image.convert("RGB"))
 
     def _detector(self) -> Any:
         if self._engine is not None:
@@ -205,7 +224,10 @@ class PaddleTesseractOcrProvider:
                     continue
                 assembled.append(
                     OcrBlock(
-                        id=position,
+                        # Numbered by `assign_ids` below, which is the only place an id is set.
+                        # Regions that recognised no text are skipped, so a position counted here
+                        # would not survive as the final id anyway.
+                        id=0,
                         text=text,
                         confidence=confidence,
                         box=region,

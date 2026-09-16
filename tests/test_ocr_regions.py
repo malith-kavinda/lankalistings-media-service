@@ -112,3 +112,10 @@ def test_boxes_that_do_not_overlap_horizontally_score_zero() -> None:
         )
         == 0.0
     )
+
+
+def test_both_reading_orders_share_one_column_threshold() -> None:
+    """Two copies of the number would let a later tuning change desync the two providers."""
+    from media_service.ocr import blocks as assembly
+
+    assert regions.COLUMN_GAP_RATIO is assembly.COLUMN_GAP_RATIO
