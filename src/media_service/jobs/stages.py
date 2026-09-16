@@ -20,6 +20,7 @@ from typing import Any, Final, Protocol
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from media_service.api.errors import OcrUnavailableError, ServiceError
+from media_service.config import DEFAULT_MAX_IMAGE_PIXELS
 from media_service.domain.categories import DEFAULT_CATALOG
 from media_service.domain.listings import CandidateDraft
 from media_service.services.ocr import OcrEngine
@@ -90,11 +91,19 @@ class PillowPreprocessor:
     OCR engine reading the raw pixels sees the text sideways. The original file is never modified --
     this produces a separate `ocr_input` derivative, so the evidence a moderator reviews is still
     the image that was uploaded.
+
+    The pixel cap is checked again here even though upload validation already applied it. This is
+    the only place that decodes a full image buffer, and it is reachable by rows that never passed
+    through an upload -- a legacy import, or an asset stored before the cap was lowered.
     """
+
+    def __init__(self, *, max_pixels: int = DEFAULT_MAX_IMAGE_PIXELS) -> None:
+        self._max_pixels = max_pixels
 
     def run(self, image_bytes: bytes) -> PreprocessResult:
         try:
             with Image.open(BytesIO(image_bytes)) as image:
+                self._reject_oversized(image.size)
                 oriented = ImageOps.exif_transpose(image) or image
                 greyscale = oriented.convert("L")
                 buffer = BytesIO()
@@ -115,6 +124,16 @@ class PillowPreprocessor:
                 "The image declares more pixels than this service will decode.",
                 retryable=False,
             ) from exc
+
+    def _reject_oversized(self, size: tuple[int, int]) -> None:
+        pixels = max(size[0], 1) * max(size[1], 1)
+        if pixels > self._max_pixels:
+            raise StageError(
+                "IMAGE_TOO_LARGE",
+                f"The image is {size[0]}x{size[1]} ({pixels} pixels); "
+                f"the limit is {self._max_pixels}.",
+                retryable=False,
+            )
 
 
 class EngineOcrStep:

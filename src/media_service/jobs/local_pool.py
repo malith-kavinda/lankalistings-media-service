@@ -208,6 +208,11 @@ class LocalPoolDispatcher:
         def task() -> None:
             try:
                 self._runner.run(item_id, claim_token=claim_token)
+            except Exception:  # noqa: BLE001 - nothing awaits this future
+                # A ThreadPoolExecutor does not report an exception from a callable whose future is
+                # never inspected, and this one never is. Without this the failure would vanish
+                # with no log line at all, leaving the item claimed until its lease expired.
+                logger.exception("Item %s failed outside the runner's own handling.", item_id)
             finally:
                 self._slots.release()
                 # A finished slot may unblock the next item immediately; do not wait out the poll

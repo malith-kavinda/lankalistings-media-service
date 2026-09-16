@@ -77,6 +77,7 @@ class UploadLimits:
     max_images_per_batch: int
     max_image_bytes: int
     max_batch_bytes: int
+    max_image_pixels: int
 
 
 class UploadRejectedError(ServiceError):
@@ -204,12 +205,27 @@ def _reject_file(
             "message": f"{incoming.filename} declares more pixels than this service will decode.",
         }
 
-    if detected[0] not in SUPPORTED_IMAGE_TYPES:
+    content_type, _, width, height, _ = detected
+    pixels = max(width, 1) * max(height, 1)
+    if pixels > limits.max_image_pixels:
+        # Checked here rather than left to Pillow, which raises only above *twice* its own limit
+        # and merely warns below that. A file in the warning band is small on disk, passes the byte
+        # cap, and then costs hundreds of megabytes to decode in the worker.
+        return {
+            "field": field,
+            "code": "IMAGE_TOO_LARGE",
+            "message": (
+                f"{incoming.filename} is {width}x{height} ({pixels} pixels); the limit is "
+                f"{limits.max_image_pixels}."
+            ),
+        }
+
+    if content_type not in SUPPORTED_IMAGE_TYPES:
         return {
             "field": field,
             "code": "UNSUPPORTED_CONTENT_TYPE",
             "message": (
-                f"{incoming.filename} is {detected[0]}; supported types are "
+                f"{incoming.filename} is {content_type}; supported types are "
                 f"{', '.join(sorted(SUPPORTED_IMAGE_TYPES))}."
             ),
         }

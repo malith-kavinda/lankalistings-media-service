@@ -43,6 +43,11 @@ DEFAULT_MAX_IMAGES_PER_BATCH = 25
 DEFAULT_MAX_IMAGE_BYTES = 10 * 1024 * 1024
 DEFAULT_MAX_BATCH_BYTES = 100 * 1024 * 1024
 
+# PRD 15.3. An explicit cap rather than Pillow's default, which only *warns* between its limit and
+# twice its limit -- a band where a highly compressible image passes validation under the byte cap
+# and is then decoded in full by the worker.
+DEFAULT_MAX_IMAGE_PIXELS = 40_000_000
+
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = getenv(name)
@@ -76,6 +81,7 @@ class Settings(BaseModel):
     max_images_per_batch: int = Field(default=DEFAULT_MAX_IMAGES_PER_BATCH, gt=0)
     max_image_bytes: int = Field(default=DEFAULT_MAX_IMAGE_BYTES, gt=0)
     max_batch_bytes: int = Field(default=DEFAULT_MAX_BATCH_BYTES, gt=0)
+    max_image_pixels: int = Field(default=DEFAULT_MAX_IMAGE_PIXELS, gt=0)
 
     # Persistence
     database_url: str = DEFAULT_DATABASE_URL
@@ -178,6 +184,7 @@ def get_settings() -> Settings:
         max_images_per_batch=_env_int("MAX_IMAGES_PER_BATCH", DEFAULT_MAX_IMAGES_PER_BATCH),
         max_image_bytes=_env_int("MAX_IMAGE_BYTES", DEFAULT_MAX_IMAGE_BYTES),
         max_batch_bytes=_env_int("MAX_BATCH_BYTES", DEFAULT_MAX_BATCH_BYTES),
+        max_image_pixels=_env_int("MAX_IMAGE_PIXELS", DEFAULT_MAX_IMAGE_PIXELS),
         database_url=getenv("DATABASE_URL", DEFAULT_DATABASE_URL),
         database_echo=_env_bool("DATABASE_ECHO", False),
         metadata_path=Path(getenv("MEDIA_SERVICE_METADATA_PATH", ".data/media_metadata.json")),

@@ -15,8 +15,8 @@ from sqlalchemy import select
 from media_service.config import Settings
 from media_service.db.tables import Advertisement, LlmExtractionRun, MediaDerivative, OcrExtraction
 from media_service.domain.item_state import BatchStatus, ItemStatus
-from media_service.jobs.stages import StageError
-from tests.support import CountingExtractor, FakeOcrStep, build_pipeline, uploads
+from media_service.jobs.stages import PillowPreprocessor, StageError
+from tests.support import CountingExtractor, FakeOcrStep, build_pipeline, png_bytes, uploads
 
 pytestmark = pytest.mark.usefixtures("engine")
 
@@ -127,6 +127,16 @@ def test_preprocessing_writes_an_ocr_input_derivative(pipeline, session) -> None
     derivatives = session.scalars(select(MediaDerivative)).all()
     assert [derivative.purpose for derivative in derivatives] == ["ocr_input"]
     assert derivatives[0].preprocessing_version == "preprocess/v0"
+
+
+def test_the_preprocessor_refuses_an_image_above_the_pixel_cap() -> None:
+    """The second line of defence, for bytes that never went through upload validation."""
+    with pytest.raises(StageError) as caught:
+        PillowPreprocessor(max_pixels=50).run(png_bytes(width=40, height=40))
+
+    assert caught.value.code == "IMAGE_TOO_LARGE"
+    # Not worth retrying: the image will be exactly as large next time.
+    assert caught.value.retryable is False
 
 
 # -- resume ------------------------------------------------------------------------------------
@@ -388,3 +398,86 @@ def _requeue_in_flight(pipeline) -> None:  # type: ignore[no-untyped-def]
             )
             work.items.requeue_abandoned(item)
         work.commit()
+
+
+# -- failures the runner must absorb rather than propagate --------------------------------------
+
+
+def test_a_failure_before_the_pipeline_starts_still_marks_the_item(pipeline, monkeypatch) -> None:
+    """`_begin` can fail too, and the item must not be left claimed and silent.
+
+    A pool worker never inspects the future it submits, so an exception escaping here would vanish
+    with no log line; an inline dispatcher would abort the rest of an already-committed batch.
+    """
+    progress, item = _item(pipeline)
+
+    def explode(item_id, claim_token):  # type: ignore[no-untyped-def]
+        raise StageError("ASSET_MISSING", "The source asset is gone.", retryable=False)
+
+    monkeypatch.setattr(pipeline.runner, "_begin", explode)
+    assert pipeline.run() == 1
+
+    parked = pipeline.service.get_item(item.id)
+    assert parked.status is ItemStatus.NEEDS_ATTENTION
+    assert parked.error_code == "ASSET_MISSING"
+
+
+def test_an_unexpected_failure_before_the_pipeline_starts_is_retryable(
+    pipeline, monkeypatch
+) -> None:
+    progress, item = _item(pipeline)
+
+    def explode(item_id, claim_token):  # type: ignore[no-untyped-def]
+        raise RuntimeError("the database went away")
+
+    monkeypatch.setattr(pipeline.runner, "_begin", explode)
+    assert pipeline.run() == 1
+
+    requeued = pipeline.service.get_item(item.id)
+    # An unknown fault says nothing about the item, so it is worth another attempt.
+    assert requeued.status is ItemStatus.UPLOADED
+    assert requeued.error_code == "INTERNAL_ERROR"
+
+
+def test_inline_dispatch_does_not_strand_the_rest_of_a_batch(
+    unit_of_work, asset_store, ingestion_settings
+) -> None:
+    """Inline mode has no poller, so an aborted loop leaves its items queued forever."""
+    from media_service.domain.listings import LocalListingGateway
+    from media_service.jobs.dispatchers import InlineDispatcher
+    from media_service.jobs.runner import ItemRunner
+    from media_service.services.ingestion import IngestionService
+    from tests.support import CountingExtractor, CountingPreprocessor, FakeOcrStep
+
+    runner = ItemRunner(
+        unit_of_work=unit_of_work,
+        store=asset_store,
+        settings=ingestion_settings,
+        preprocess=CountingPreprocessor(),
+        ocr=FakeOcrStep(),
+        extraction=CountingExtractor(),
+        gateway=LocalListingGateway(),
+    )
+    attempted: list[str] = []
+    original = runner.run
+
+    def run(item_id, *, claim_token):  # type: ignore[no-untyped-def]
+        attempted.append(item_id)
+        if len(attempted) == 1:
+            raise RuntimeError("something the runner could not handle")
+        return original(item_id, claim_token=claim_token)
+
+    runner.run = run  # type: ignore[method-assign]
+    dispatcher = InlineDispatcher(unit_of_work=unit_of_work, runner=runner)
+    service = IngestionService(
+        unit_of_work=unit_of_work,
+        store=asset_store,
+        settings=ingestion_settings,
+        dispatcher=dispatcher,
+    )
+
+    progress = service.create_batch(uploads(3), created_by=OPERATOR)
+
+    # Every item was attempted, and the upload itself still succeeded.
+    assert attempted == [item.id for item in progress.items]
+    assert service.get_item(progress.items[2].id).status is ItemStatus.AWAITING_REVIEW

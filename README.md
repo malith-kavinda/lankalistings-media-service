@@ -181,6 +181,8 @@ Database, storage, and the worker:
 - `MEDIA_STORAGE_ROOT`: where blobs are written. Default `.data/media`.
 - `MAX_IMAGES_PER_BATCH` (25), `MAX_IMAGE_BYTES` (10 MiB), `MAX_BATCH_BYTES` (100 MiB). The total is
   binding and is checked first: 25 images at the per-image limit would exceed it.
+- `MAX_IMAGE_PIXELS` (40M): declared dimensions, checked before anything decodes a full buffer. A
+  highly compressible image passes the byte cap and still costs hundreds of megabytes to decode.
 - `JOB_DISPATCH_MODE`: `local_pool` (default), `inline`, `manual`, or `none`.
 - `MAX_WORKER_CONCURRENCY` (2), `LEASE_SECONDS` (300), `POLL_INTERVAL_MS` (2000),
   `REAPER_INTERVAL_MS` (15000), `MAX_ITEM_ATTEMPTS` (3).

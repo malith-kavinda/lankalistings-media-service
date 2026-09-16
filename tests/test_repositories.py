@@ -395,3 +395,26 @@ def test_a_new_generation_supersedes_only_undecided_candidates(session) -> None:
     assert repository.get(undecided.id).candidate_state == "superseded"
     assert repository.get(decided.id).candidate_state == "linked"
     assert repository.has_decided_candidate(item.id) is True
+
+
+def test_a_collision_on_the_attempt_number_takes_the_next_one(session) -> None:
+    """Two workers can compute the same attempt from an unlocked `max(attempt) + 1`.
+
+    Neither row is `completed`, so there is no winner to resume from -- yielding would be wrong and
+    raising would burn a retry cycle. The loser simply takes the next number.
+    """
+    _, items = seed_batch_with_items(session)
+    item = items[0]
+    unit = UnitOfWork(session)
+
+    unit.artifacts.record_ocr(_ocr_row(item.id, item.source_asset_id, attempt=1, status="failed"))
+    session.commit()
+
+    second, created = unit.artifacts.record_ocr(
+        _ocr_row(item.id, item.source_asset_id, attempt=1, status="failed")
+    )
+    session.commit()
+
+    assert created is True
+    assert second.attempt == 2
+    assert unit.artifacts.next_ocr_attempt(item_id=item.id, generation=1) == 3

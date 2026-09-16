@@ -96,10 +96,23 @@ class ItemRunner:
         )
 
     def run(self, item_id: str, *, claim_token: str) -> None:
-        """Take one claimed item as far as it goes. Never raises for an item-level failure."""
+        """Take one claimed item as far as it goes. Never raises for an item-level failure.
+
+        That promise covers `_begin` as well. An item whose asset row is missing, or whose first
+        read hits a database blip, fails *before* there is a context to fail it with -- and if that
+        escaped, a pool worker would drop it silently (nothing awaits the future) while an inline
+        dispatcher would abort the rest of the batch, with no poller to pick the remainder up.
+        """
         try:
             context, plan = self._begin(item_id, claim_token)
         except ItemClaimLostError:
+            return
+        except StageError as error:
+            self._fail(item_id, claim_token, error)
+            return
+        except Exception as error:  # noqa: BLE001 - an unknown fault must not lose the item
+            logger.exception("Unhandled failure starting item %s", item_id)
+            self._fail(item_id, claim_token, StageError("INTERNAL_ERROR", str(error)))
             return
 
         try:
@@ -112,10 +125,10 @@ class ItemRunner:
             # already resumed from whatever artifacts this attempt managed to commit.
             logger.info("Claim lost for item %s; abandoning this attempt.", item_id)
         except StageError as error:
-            self._fail(context, error)
+            self._fail(item_id, claim_token, error)
         except Exception as error:  # noqa: BLE001 - an unknown fault must not kill the worker
             logger.exception("Unhandled failure processing item %s", item_id)
-            self._fail(context, StageError("INTERNAL_ERROR", str(error), retryable=True))
+            self._fail(item_id, claim_token, StageError("INTERNAL_ERROR", str(error)))
 
     # -- stages --------------------------------------------------------------------------------
 
@@ -319,51 +332,52 @@ class ItemRunner:
 
     # -- failure -------------------------------------------------------------------------------
 
-    def _fail(self, context: ItemContext, error: StageError) -> None:
-        """Requeue with backoff, or park the item for a person to look at."""
+    def _fail(self, item_id: str, claim_token: str, error: StageError) -> None:
+        """Requeue with backoff, or park the item for a person to look at.
+
+        Takes ids rather than a context, because the caller may not have one: a failure inside
+        `_begin` happens before the context is built, and that item still has to be marked.
+
+        This is the last handler in the chain, so it swallows its own failures too. A database
+        problem here would otherwise escape `run()` and leave the item claimed and silent until its
+        lease expired -- the outcome this method exists to prevent.
+        """
         try:
             with self._unit_of_work() as unit:
-                item = unit.items.get(context.item_id)
-                if item is None or item.claim_token != context.claim_token:
+                item = unit.items.get(item_id)
+                if item is None or item.claim_token != claim_token:
                     return
 
-                unit.artifacts.abandon_running_ocr(
-                    item_id=context.item_id, generation=context.generation
-                )
-                unit.artifacts.abandon_running_llm_runs(
-                    item_id=context.item_id, generation=context.generation
-                )
+                generation = item.pipeline_generation
+                unit.artifacts.abandon_running_ocr(item_id=item_id, generation=generation)
+                unit.artifacts.abandon_running_llm_runs(item_id=item_id, generation=generation)
 
                 current = ItemStatus(item.status)
                 exhausted = (
                     not error.retryable or item.attempt_count >= self._settings.max_item_attempts
                 )
+                shared = {
+                    "expected": current,
+                    "claim_token": claim_token,
+                    "release_claim": True,
+                    "error_code": error.code,
+                    "error_message": error.message,
+                    "failed_stage": stage_of(current).value,
+                }
                 if exhausted:
-                    unit.items.transition(
-                        item,
-                        target=ItemStatus.NEEDS_ATTENTION,
-                        expected=current,
-                        claim_token=context.claim_token,
-                        release_claim=True,
-                        error_code=error.code,
-                        error_message=error.message,
-                        failed_stage=stage_of(current).value,
-                    )
+                    unit.items.transition(item, target=ItemStatus.NEEDS_ATTENTION, **shared)
                 else:
                     unit.items.transition(
                         item,
                         target=ItemStatus.UPLOADED,
-                        expected=current,
-                        claim_token=context.claim_token,
-                        release_claim=True,
                         run_after=_backoff_from(item.attempt_count),
-                        error_code=error.code,
-                        error_message=error.message,
-                        failed_stage=stage_of(current).value,
+                        **shared,
                     )
                 unit.commit()
         except ItemClaimLostError:
-            logger.info("Claim lost while failing item %s.", context.item_id)
+            logger.info("Claim lost while failing item %s.", item_id)
+        except Exception:  # noqa: BLE001 - the reaper is the backstop if even this fails
+            logger.exception("Could not record the failure of item %s", item_id)
 
     # -- helpers -------------------------------------------------------------------------------
 

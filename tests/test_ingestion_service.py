@@ -178,6 +178,33 @@ def test_an_oversized_image_names_itself_in_the_rejection(
     assert "huge.png" in caught.value.details[0]["message"]
 
 
+def test_an_image_with_too_many_pixels_is_refused_however_small_the_file(
+    unit_of_work, asset_store, dispatcher
+) -> None:
+    """A compressible image is tiny on disk and enormous in memory.
+
+    Pillow only *warns* between its own limit and twice that limit, so relying on its exception
+    leaves a band where a few hundred kilobytes decode into hundreds of megabytes in the worker.
+    The cap is applied to the declared dimensions instead.
+    """
+    service = IngestionService(
+        unit_of_work=unit_of_work,
+        store=asset_store,
+        settings=Settings(max_image_pixels=50),
+        dispatcher=dispatcher,
+    )
+
+    with pytest.raises(UploadRejectedError) as caught:
+        service.create_batch(
+            [upload(png_bytes(width=40, height=40), filename="wide.png")], created_by=OPERATOR
+        )
+
+    detail = caught.value.details[0]
+    assert detail["code"] == "IMAGE_TOO_LARGE"
+    assert "1600 pixels" in detail["message"]
+    assert list(asset_store.iter_stored_keys()) == []
+
+
 def test_a_file_that_is_not_an_image_is_refused(ingestion_service) -> None:
     with pytest.raises(UploadRejectedError) as caught:
         ingestion_service.create_batch(
@@ -465,3 +492,28 @@ def test_a_plain_retry_cannot_reprocess_a_finished_item(ingestion_service) -> No
 
     with pytest.raises(NothingToRetryError):
         ingestion_service.retry_item(item_id, actor_id="moderator-1")
+
+
+def test_a_batch_retry_skips_an_item_that_stopped_being_retryable(
+    ingestion_service, monkeypatch
+) -> None:
+    """The retryable list is read in an earlier transaction than the retries themselves.
+
+    An item that leaves the set in between -- a concurrent operator retry, most often -- must not
+    turn a request that already retried its siblings into a single 409.
+    """
+    progress = ingestion_service.create_batch(uploads(2), created_by=OPERATOR)
+    _fail(ingestion_service, progress.items[0].id)
+    _fail(ingestion_service, progress.items[1].id)
+
+    original = ingestion_service.retry_item
+
+    def flaky(item_id, **kwargs):  # type: ignore[no-untyped-def]
+        if item_id == progress.items[0].id:
+            raise NothingToRetryError(item_id=item_id, status="completed")
+        return original(item_id, **kwargs)
+
+    monkeypatch.setattr(ingestion_service, "retry_item", flaky)
+    outcome = ingestion_service.retry_batch(progress.id, actor_id="moderator-1")
+
+    assert [item.id for item in outcome.items] == [progress.items[1].id]

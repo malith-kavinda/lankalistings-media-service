@@ -71,7 +71,7 @@ def create_app(
         unit_of_work=resolved_unit_of_work,
         store=resolved_store,
         settings=resolved_settings,
-        preprocess=PillowPreprocessor(),
+        preprocess=PillowPreprocessor(max_pixels=resolved_settings.max_image_pixels),
         ocr=EngineOcrStep(resolved_ocr_engine),
         extraction=RuleBasedExtractor(),
         gateway=LocalListingGateway(),

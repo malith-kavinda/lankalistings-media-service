@@ -20,6 +20,7 @@ The sequence is fixed, and each step is where it is for a reason:
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Sequence
 from hashlib import sha256
@@ -56,6 +57,8 @@ from media_service.services.uploads import (
     stage_upload_set,
 )
 from media_service.storage import FilesystemAssetStore, original_key
+
+logger = logging.getLogger(__name__)
 
 DUPLICATE_WARNING = "DUPLICATE_IMAGE_IN_BATCH"
 
@@ -393,13 +396,22 @@ class IngestionService:
                 if ItemStatus(item.status) in RETRYABLE
             ]
 
-        retried = tuple(
-            self.retry_item(
-                item_id, mode="resume", actor_id=actor_id, correlation_id=correlation_id
-            ).items[0]
-            for item_id in retryable
-        )
-        return RetryOutcome(mode="resume", items=retried)
+        retried = []
+        for item_id in retryable:
+            try:
+                outcome = self.retry_item(
+                    item_id, mode="resume", actor_id=actor_id, correlation_id=correlation_id
+                )
+            except NothingToRetryError:
+                # The list was read in an earlier transaction, and this item has stopped being
+                # retryable since -- a concurrent operator got there first, most likely. Skipping
+                # it matches what this call already does with items that never failed; raising
+                # would report total failure for a request that has already retried the others.
+                logger.info("Item %s left the retryable set before its batch retry ran.", item_id)
+                continue
+            retried.append(outcome.items[0])
+
+        return RetryOutcome(mode="resume", items=tuple(retried))
 
     # -- helpers -------------------------------------------------------------------------------
 
@@ -408,6 +420,7 @@ class IngestionService:
             max_images_per_batch=self._settings.max_images_per_batch,
             max_image_bytes=self._settings.max_image_bytes,
             max_batch_bytes=self._settings.max_batch_bytes,
+            max_image_pixels=self._settings.max_image_pixels,
         )
 
 

@@ -10,10 +10,13 @@ inline is protected from a concurrent worker exactly as one processed by the poo
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 
 from media_service.db.uow import UnitOfWorkFactory
 from media_service.jobs.runner import ItemRunner
+
+logger = logging.getLogger(__name__)
 
 # A guard, not a queue limit: it stops a mistake in the claim predicates from spinning forever
 # inside one call. A batch is 25 items, so any real drain finishes far below this.
@@ -56,10 +59,19 @@ class InlineDispatcher:
         return None
 
     def _process(self, item_id: str) -> None:
+        """Run one item, and never let it take the rest of the batch with it.
+
+        The runner handles its own item-level failures; this catches what it could not. In inline
+        mode there is no poller, so an exception escaping here would abort the loop and leave every
+        remaining item of an already-committed batch queued with nothing to pick it up.
+        """
         claim = self._claim(item_id)
         if claim is None:
             return
-        self._runner.run(item_id, claim_token=claim)
+        try:
+            self._runner.run(item_id, claim_token=claim)
+        except Exception:  # noqa: BLE001 - one bad item must not strand its siblings
+            logger.exception("Item %s failed outside the runner's own handling.", item_id)
 
     def _claim(self, item_id: str) -> str | None:
         with self._unit_of_work() as unit:
@@ -111,7 +123,12 @@ class ManualDispatcher:
         return None
 
     def run_once(self, *, limit: int = MAX_DRAIN_ITERATIONS) -> int:
-        """Process every item claimable right now. Returns how many ran."""
+        """Process every item claimable right now. Returns how many ran.
+
+        Unlike the inline and pool dispatchers, this one lets an unexpected exception propagate.
+        It drives tests and manual runs, where a surprise should be loud rather than logged and
+        stepped over.
+        """
         processed = 0
         while processed < limit:
             claim = self._claim_next()
