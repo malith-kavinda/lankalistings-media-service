@@ -32,6 +32,13 @@ DEFAULT_CORS_ORIGINS = (
 
 # PRD 15.1. The total is binding and is checked first: 25 images at the per-image maximum would be
 # 250 MiB, which the total forbids.
+# Closed vocabularies for the switches. A typo in any of these is a configuration error the
+# service must die on rather than silently fall back from -- falling back from an auth mode would
+# fail open.
+OPERATOR_AUTH_MODES = ("none", "static_token")
+JOB_DISPATCH_MODES = ("local_pool", "inline", "manual", "none")
+MEDIA_REPOSITORIES = ("json", "sql")
+
 DEFAULT_MAX_IMAGES_PER_BATCH = 25
 DEFAULT_MAX_IMAGE_BYTES = 10 * 1024 * 1024
 DEFAULT_MAX_BATCH_BYTES = 100 * 1024 * 1024
@@ -77,6 +84,7 @@ class Settings(BaseModel):
     storage_root: Path = Path(".data/media")
 
     # Worker and queue
+    job_dispatch_mode: str = "local_pool"
     worker_concurrency: int = Field(default=2, gt=0)
     lease_seconds: int = Field(default=300, gt=0)
     heartbeat_seconds: int = Field(default=30, gt=0)
@@ -90,6 +98,7 @@ class Settings(BaseModel):
     operator_api_token: str | None = None
 
     # Wire compatibility
+    media_repository: str = "json"
     public_image_url_mode: str = "data_url"
     advertisement_status_wire: str = "legacy"
 
@@ -98,6 +107,36 @@ class Settings(BaseModel):
     @property
     def is_local_or_test(self) -> bool:
         return self.environment in {"local", "test"}
+
+    def validate_startup(self) -> None:
+        """Refuse to boot on a configuration that would fail later, or fail open.
+
+        Checked at startup rather than at first use: a service that accepts uploads for an hour and
+        then discovers its auth mode is a typo has already let them through.
+        """
+        if self.operator_auth_mode not in OPERATOR_AUTH_MODES:
+            raise ValueError(
+                f"OPERATOR_AUTH_MODE={self.operator_auth_mode!r} is not one of "
+                f"{', '.join(sorted(OPERATOR_AUTH_MODES))}."
+            )
+        if self.operator_auth_mode == "static_token" and not self.operator_api_token:
+            raise ValueError(
+                "OPERATOR_AUTH_MODE=static_token requires OPERATOR_API_TOKEN to be set."
+            )
+        if self.job_dispatch_mode not in JOB_DISPATCH_MODES:
+            raise ValueError(
+                f"JOB_DISPATCH_MODE={self.job_dispatch_mode!r} is not one of "
+                f"{', '.join(sorted(JOB_DISPATCH_MODES))}."
+            )
+        if self.media_repository not in MEDIA_REPOSITORIES:
+            raise ValueError(
+                f"MEDIA_REPOSITORY={self.media_repository!r} is not one of "
+                f"{', '.join(sorted(MEDIA_REPOSITORIES))}."
+            )
+        if self.operator_auth_mode == "none" and not self.is_local_or_test:
+            raise ValueError(
+                "OPERATOR_AUTH_MODE=none is only allowed in local and test environments."
+            )
 
 
 def _detect_tesseract_cmd() -> str | None:
@@ -143,6 +182,7 @@ def get_settings() -> Settings:
         database_echo=_env_bool("DATABASE_ECHO", False),
         metadata_path=Path(getenv("MEDIA_SERVICE_METADATA_PATH", ".data/media_metadata.json")),
         storage_root=Path(getenv("MEDIA_STORAGE_ROOT", ".data/media")),
+        job_dispatch_mode=getenv("JOB_DISPATCH_MODE", "local_pool"),
         worker_concurrency=_env_int("MAX_WORKER_CONCURRENCY", 2),
         lease_seconds=_env_int("LEASE_SECONDS", 300),
         heartbeat_seconds=_env_int("HEARTBEAT_SECONDS", 30),
@@ -152,6 +192,7 @@ def get_settings() -> Settings:
         worker_single_instance=_env_bool("WORKER_SINGLE_INSTANCE", True),
         operator_auth_mode=getenv("OPERATOR_AUTH_MODE", "none"),
         operator_api_token=getenv("OPERATOR_API_TOKEN"),
+        media_repository=getenv("MEDIA_REPOSITORY", "json"),
         public_image_url_mode=getenv("PUBLIC_IMAGE_URL_MODE", "data_url"),
         advertisement_status_wire=getenv("ADVERTISEMENT_STATUS_WIRE", "legacy"),
         cors_origins=cors_origins,

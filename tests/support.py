@@ -187,3 +187,36 @@ def build_pipeline(*, unit_of_work, store, settings, ocr=None, extraction=None):
         extraction=extraction_step,
         unit_of_work=unit_of_work,
     )
+
+
+@dataclass
+class StubOcrEngine:
+    """An `OcrEngine` for tests that go through `create_app`.
+
+    Separate from the one in `test_media_service`, which pins the prototype's behaviour and is
+    deliberately left untouched.
+    """
+
+    text: str = "Ocean View Apartment Colombo 05 Rs. 4,500,000"
+    available: bool = True
+    reason: str | None = None
+
+    def is_available(self) -> bool:
+        return self.available
+
+    def availability_reason(self) -> str | None:
+        return self.reason
+
+    def extract_text(self, image_bytes: bytes, *, content_type: str):  # type: ignore[no-untyped-def]
+        from media_service.services.ocr import OcrOutput
+
+        return OcrOutput(
+            text=self.text,
+            engine="stub",
+            model_version="stub/1.0",
+            language="sin+eng",
+            confidence="high",
+            processing_ms=2,
+            width=12,
+            height=8,
+        )

@@ -1,14 +1,44 @@
+"""Application assembly.
+
+Everything is constructed here and handed down; nothing reaches for a global. That is what lets a
+test replace the OCR engine, the dispatcher, or the whole unit-of-work factory by passing an
+argument, and it is why `create_app` keeps accepting the prototype's `repository` and `ocr_engine`
+parameters unchanged.
+
+Building the app touches no database. `create_engine` opens no connection, so an instance can be
+constructed -- and the prototype's endpoints exercised -- with PostgreSQL absent. The worker is the
+only part that needs the database at startup, and it starts from the lifespan hook rather than from
+the constructor.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from media_service.api.errors import ServiceError, service_error_handler, validation_error_handler
+from media_service.api.ingestion_routes import router as ingestion_router
 from media_service.api.routes import router
 from media_service.config import Settings, get_settings
+from media_service.db.engine import build_session_factory, cached_engine
+from media_service.db.uow import UnitOfWorkFactory
+from media_service.domain.listings import LocalListingGateway
 from media_service.domain.repository import JsonMediaRepository, MediaRepository
+from media_service.jobs.dispatchers import InlineDispatcher, ManualDispatcher
+from media_service.jobs.local_pool import LocalPoolDispatcher
+from media_service.jobs.protocol import JobDispatcher, NullDispatcher
+from media_service.jobs.runner import ItemRunner
+from media_service.jobs.stages import EngineOcrStep, PillowPreprocessor, RuleBasedExtractor
 from media_service.services.advertisements import AdvertisementService
+from media_service.services.assets import AssetService
+from media_service.services.ingestion import IngestionService
 from media_service.services.media import MediaExtractionService
 from media_service.services.ocr import OcrEngine, TesseractOcrEngine
+from media_service.storage import FilesystemAssetStore
 
 
 def create_app(
@@ -16,22 +46,59 @@ def create_app(
     settings: Settings | None = None,
     ocr_engine: OcrEngine | None = None,
     repository: MediaRepository | None = None,
+    unit_of_work: UnitOfWorkFactory | None = None,
+    dispatcher: JobDispatcher | None = None,
+    store: FilesystemAssetStore | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
+    resolved_settings.validate_startup()
+
     resolved_ocr_engine = ocr_engine or TesseractOcrEngine(
         tesseract_cmd=resolved_settings.tesseract_cmd,
         language=resolved_settings.tesseract_lang,
         tessdata_dir=resolved_settings.tesseract_data_dir,
     )
     resolved_repository = repository or JsonMediaRepository(resolved_settings.metadata_path)
+    resolved_store = store or FilesystemAssetStore(resolved_settings.storage_root)
+    resolved_unit_of_work = unit_of_work or UnitOfWorkFactory(
+        build_session_factory(cached_engine(resolved_settings.database_url))
+    )
+
+    runner = ItemRunner(
+        unit_of_work=resolved_unit_of_work,
+        store=resolved_store,
+        settings=resolved_settings,
+        preprocess=PillowPreprocessor(),
+        ocr=EngineOcrStep(resolved_ocr_engine),
+        extraction=RuleBasedExtractor(),
+        gateway=LocalListingGateway(),
+    )
+    resolved_dispatcher = dispatcher or build_dispatcher(
+        resolved_settings, unit_of_work=resolved_unit_of_work, runner=runner
+    )
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        resolved_dispatcher.start()
+        try:
+            yield
+        finally:
+            # Draining rather than dropping: an item abandoned here would wait out its whole lease
+            # before another worker could take it.
+            resolved_dispatcher.stop()
 
     app = FastAPI(
         title="LankaListings Media Service",
         version="0.1.0",
-        description="Image validation and OCR extraction service for uploaded listing media.",
+        description="Image ingestion, OCR extraction, and review candidates for listing media.",
+        lifespan=lifespan,
     )
     app.state.settings = resolved_settings
     app.state.ocr_engine = resolved_ocr_engine
+    app.state.unit_of_work = resolved_unit_of_work
+    app.state.asset_store = resolved_store
+    app.state.dispatcher = resolved_dispatcher
+    app.state.item_runner = runner
     app.state.media_service = MediaExtractionService(
         repository=resolved_repository,
         ocr_engine=resolved_ocr_engine,
@@ -39,6 +106,15 @@ def create_app(
     app.state.advertisement_service = AdvertisementService(
         repository=resolved_repository,
         ocr_engine=resolved_ocr_engine,
+    )
+    app.state.ingestion_service = IngestionService(
+        unit_of_work=resolved_unit_of_work,
+        store=resolved_store,
+        settings=resolved_settings,
+        dispatcher=resolved_dispatcher,
+    )
+    app.state.asset_service = AssetService(
+        unit_of_work=resolved_unit_of_work, store=resolved_store
     )
 
     if resolved_settings.cors_origins:
@@ -53,7 +129,31 @@ def create_app(
     app.add_exception_handler(ServiceError, service_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.include_router(router)
+    app.include_router(ingestion_router)
     return app
+
+
+def build_dispatcher(
+    settings: Settings, *, unit_of_work: UnitOfWorkFactory, runner: ItemRunner
+) -> JobDispatcher:
+    """Pick the worker for this deployment.
+
+    An unknown mode is impossible here -- `validate_startup` already refused it -- so there is no
+    silent fallback to a default that would leave uploads sitting in the queue unprocessed.
+    """
+    if settings.job_dispatch_mode == "local_pool":
+        return LocalPoolDispatcher(
+            unit_of_work=unit_of_work, runner=runner, settings=settings
+        )
+    if settings.job_dispatch_mode == "inline":
+        return InlineDispatcher(
+            unit_of_work=unit_of_work, runner=runner, lease_seconds=settings.lease_seconds
+        )
+    if settings.job_dispatch_mode == "manual":
+        return ManualDispatcher(
+            unit_of_work=unit_of_work, runner=runner, lease_seconds=settings.lease_seconds
+        )
+    return NullDispatcher()
 
 
 app = create_app()

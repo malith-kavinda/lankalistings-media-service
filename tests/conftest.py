@@ -186,3 +186,32 @@ def pipeline(unit_of_work, asset_store, ingestion_settings):  # type: ignore[no-
     return build_pipeline(
         unit_of_work=unit_of_work, store=asset_store, settings=ingestion_settings
     )
+
+
+@pytest.fixture
+def api_settings(tmp_path, database_url):  # type: ignore[no-untyped-def]
+    """Settings for an app under test: the test database, a temp store, a manual worker."""
+    from media_service.config import Settings
+
+    return Settings(
+        database_url=database_url,
+        storage_root=tmp_path / "media",
+        metadata_path=tmp_path / "metadata.json",
+        job_dispatch_mode="manual",
+    )
+
+
+@pytest.fixture
+def api_client(api_settings, unit_of_work, asset_store):  # type: ignore[no-untyped-def]
+    from fastapi.testclient import TestClient
+
+    from media_service.main import create_app
+    from tests.support import StubOcrEngine
+
+    app = create_app(
+        settings=api_settings,
+        ocr_engine=StubOcrEngine(),
+        unit_of_work=unit_of_work,
+        store=asset_store,
+    )
+    return TestClient(app)

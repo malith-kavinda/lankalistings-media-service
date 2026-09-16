@@ -167,12 +167,19 @@ def test_baseline_pending_review_is_the_wire_status() -> None:
     assert response.json()["data"]["advertisement"]["status"] == "pending_review"
 
 
-def test_baseline_has_no_batch_endpoints_yet() -> None:
-    """Phase 1 adds these. Recorded so the gap is explicit rather than assumed."""
+def test_the_batch_endpoints_now_exist_alongside_the_single_ad_path() -> None:
+    """Phase 1 filled the gap this file recorded, without moving the prototype's endpoints.
+
+    The assertion is only that the routes are mounted -- their behaviour belongs to the ingestion
+    tests. What matters here is that adding them left the single-ad path exactly as it was, which
+    every other test in this file is still checking.
+    """
     client = client_for("")
 
-    assert client.post("/api/v1/ingestion-batches").status_code == 404
-    assert client.get("/api/v1/ingestion-batches/batch_1").status_code == 404
+    # 422 rather than 404: the route exists and is refusing a request that carries no files.
+    # Deliberately the only call made here -- reading a batch would need a database, and this file
+    # is about the prototype, which never had one.
+    assert client.post("/api/v1/ingestion-batches").status_code == 422
 
 
 def test_baseline_review_queue_has_no_filters_or_pagination() -> None:
