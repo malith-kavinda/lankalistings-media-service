@@ -25,6 +25,7 @@ from media_service.api.ingestion_routes import router as ingestion_router
 from media_service.api.routes import router
 from media_service.config import Settings, get_settings
 from media_service.db.engine import build_session_factory, cached_engine
+from media_service.db.repositories.legacy import SqlAlchemyMediaRepository
 from media_service.db.uow import UnitOfWorkFactory
 from media_service.domain.listings import LocalListingGateway
 from media_service.domain.repository import JsonMediaRepository, MediaRepository
@@ -58,10 +59,12 @@ def create_app(
         language=resolved_settings.tesseract_lang,
         tessdata_dir=resolved_settings.tesseract_data_dir,
     )
-    resolved_repository = repository or JsonMediaRepository(resolved_settings.metadata_path)
     resolved_store = store or FilesystemAssetStore(resolved_settings.storage_root)
     resolved_unit_of_work = unit_of_work or UnitOfWorkFactory(
         build_session_factory(cached_engine(resolved_settings.database_url))
+    )
+    resolved_repository = repository or build_repository(
+        resolved_settings, unit_of_work=resolved_unit_of_work, store=resolved_store
     )
 
     runner = ItemRunner(
@@ -131,6 +134,24 @@ def create_app(
     app.include_router(router)
     app.include_router(ingestion_router)
     return app
+
+
+def build_repository(
+    settings: Settings, *, unit_of_work: UnitOfWorkFactory, store: FilesystemAssetStore
+) -> MediaRepository:
+    """Where the prototype's endpoints keep their data.
+
+    `json` is the prototype's own file and stays the default until the import has been run;
+    `sql` puts the same endpoints on PostgreSQL. The JSON file is never written by the `sql` path
+    and never deleted, so rolling back is this variable and nothing else.
+    """
+    if settings.media_repository == "sql":
+        return SqlAlchemyMediaRepository(
+            unit_of_work=unit_of_work,
+            store=store,
+            public_image_url_mode=settings.public_image_url_mode,
+        )
+    return JsonMediaRepository(settings.metadata_path)
 
 
 def build_dispatcher(
