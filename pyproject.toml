@@ -10,6 +10,8 @@ requires-python = ">=3.11"
 dependencies = [
   "alembic>=1.13,<2.0",
   "fastapi>=0.115,<1.0",
+  # Runtime, not just test: the LLM adapters call providers over HTTP with a sync client.
+  "httpx>=0.27,<1.0",
   "pillow>=10.4,<12.0",
   "psycopg[binary]>=3.1,<4.0",
   "pydantic>=2.8,<3.0",
@@ -29,7 +31,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "httpx>=0.27,<1.0",
   "pytest>=8.2,<9.0",
   "ruff>=0.6,<1.0"
 ]

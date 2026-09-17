@@ -12,6 +12,10 @@ not part of how work is scheduled.
 
 `StageError` carries whether the failure is worth another attempt. A timeout is; an image that will
 not decode is not, and retrying it three times only delays the moment a person is told.
+
+Phase 3 removed the rule-based extractor that used to live here. It is now an LLM *provider*
+(`LLM_PROVIDER=rule_based`), which puts it behind the same startup guard as `fake`: a heuristic that
+invents advertisements without a model must not be constructible in production (PRD 11.6).
 """
 
 from __future__ import annotations
@@ -19,9 +23,8 @@ from __future__ import annotations
 from typing import Protocol
 
 from media_service.api.errors import OcrUnavailableError, ServiceError
-from media_service.domain.categories import DEFAULT_CATALOG
-from media_service.domain.listings import CandidateDraft
-from media_service.ocr import quality
+from media_service.llm.service import ExtractionContext, ExtractionOutput
+from media_service.llm.types import RETRYABLE_CODES
 from media_service.ocr.preprocess import (
     ImagePreprocessor,
     PreprocessError,
@@ -32,6 +35,8 @@ from media_service.ocr.protocol import OcrProvider
 from media_service.ocr.types import OcrResult
 
 __all__ = [
+    "ExtractionContext",
+    "ExtractionOutput",
     "ExtractionStep",
     "ImagePreprocessor",
     "OcrProvider",
@@ -39,8 +44,8 @@ __all__ = [
     "PreprocessResult",
     "PreprocessSettings",
     "PreprocessStep",
-    "RuleBasedExtractor",
     "StageError",
+    "extraction_failure",
     "to_stage_error",
 ]
 
@@ -63,7 +68,18 @@ class PreprocessStep(Protocol):
 
 
 class ExtractionStep(Protocol):
-    def run(self, result: OcrResult) -> list[CandidateDraft]: ...
+    """Turning OCR blocks into candidates.
+
+    Takes a context as well as the result, because an extractor that calls a provider has to record
+    what it did: one row per attempt, keyed by item and generation. `rebuild` re-derives candidates
+    from a stored response with no provider call, which is what makes a resume free.
+    """
+
+    def run(self, result: OcrResult, context: ExtractionContext) -> ExtractionOutput: ...
+
+    def rebuild(self, payload: dict[str, object], result: OcrResult) -> ExtractionOutput: ...
+
+    def request_hash_for(self, result: OcrResult) -> str: ...
 
 
 # Failures the OCR layer raises, and whether running the same page again could plausibly help.
@@ -71,6 +87,21 @@ class ExtractionStep(Protocol):
 # decode will not decode next time either.
 RETRYABLE_OCR_CODES = frozenset({"OCR_UNAVAILABLE", "OCR_TIMEOUT", "OCR_FAILED"})
 TERMINAL_PREPROCESS_CODES = frozenset({"IMAGE_UNREADABLE", "IMAGE_TOO_LARGE"})
+
+
+def extraction_failure(output: ExtractionOutput) -> StageError:
+    """Translate an extraction failure into the pipeline's vocabulary.
+
+    Only transport-shaped failures are worth another automatic attempt. A response that failed the
+    schema after its repair was spent will fail the same way next time, so the item goes to
+    `needs_attention` for a person rather than burning the item's attempts on a certainty.
+    """
+    code = output.failure_code or "LLM_EXTRACTION_FAILED"
+    return StageError(
+        code,
+        output.failure_detail or "Extraction failed.",
+        retryable=code in RETRYABLE_CODES,
+    )
 
 
 def to_stage_error(error: Exception) -> StageError:
@@ -86,52 +117,3 @@ def to_stage_error(error: Exception) -> StageError:
             error.code, error.message, retryable=error.code in RETRYABLE_OCR_CODES
         )
     return StageError("INTERNAL_ERROR", str(error), retryable=True)
-
-
-class RuleBasedExtractor:
-    """Phase 1's stand-in extractor: heuristics over the OCR text, at most one candidate.
-
-    It exists so the pipeline can be exercised end to end before Phase 3 wires a model in, and it
-    is honest about what it is -- one advertisement per page, which is precisely the limitation the
-    LLM stage is there to remove. Candidates it produces are marked `ocr_heuristic`, so a reviewer
-    and any later analysis can tell them apart from model output.
-    """
-
-    def run(self, result: OcrResult) -> list[CandidateDraft]:
-        if quality.is_empty(result.text):
-            # Not a failure. A page with no advertisements on it is a legitimate outcome, and the
-            # item ends in `no_ads` rather than in an error state (AC-003).
-            return []
-
-        from media_service.services.advertisements import AdvertisementService
-
-        fields = AdvertisementService._extract_advertisement_fields(result.text)  # noqa: SLF001
-        category, unmapped = DEFAULT_CATALOG.resolve(fields["category"])
-        warnings = tuple(result.warnings)
-        if unmapped:
-            warnings = (*warnings, "CATEGORY_UNMAPPED")
-
-        return [
-            CandidateDraft(
-                index=0,
-                title=fields["title"],
-                description=fields["description"],
-                category=category,
-                location=fields["location"],
-                price=fields["price"],
-                confidence_label=_confidence_label(result.mean_confidence),
-                confidence=result.mean_confidence,
-                source_text=result.text,
-                # Every block, because this extractor cannot tell which part of the page an
-                # advertisement came from. Phase 3's model cites the blocks it actually used.
-                source_block_ids=tuple(block.id for block in result.blocks),
-                warning_codes=warnings,
-                extracted_values=dict(fields),
-            )
-        ]
-
-
-def _confidence_label(value: float | None) -> str:
-    from media_service.ocr.compat import confidence_to_word
-
-    return confidence_to_word(value)

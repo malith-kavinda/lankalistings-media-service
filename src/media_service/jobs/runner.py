@@ -29,19 +29,23 @@ from typing import Any, Final
 from media_service.api.errors import ItemClaimLostError
 from media_service.config import Settings
 from media_service.db.base import utcnow
-from media_service.db.tables import LlmExtractionRun, MediaDerivative, OcrExtraction
+from media_service.db.tables import MediaDerivative, OcrExtraction
 from media_service.db.uow import UnitOfWorkFactory
 from media_service.domain.categories import CATEGORY_CATALOG_VERSION
-from media_service.domain.ids import new_derivative_id, new_llm_run_id, new_ocr_extraction_id
+from media_service.domain.ids import new_derivative_id, new_ocr_extraction_id
 from media_service.domain.item_state import ItemStatus, stage_of
 from media_service.domain.listings import CandidateDraft, ListingGateway
 from media_service.jobs.resume import ResumePlan, plan_resume
 from media_service.jobs.stages import (
+    ExtractionContext,
     ExtractionStep,
     PreprocessStep,
     StageError,
+    extraction_failure,
     to_stage_error,
 )
+from media_service.llm.recording import DbAttemptRecorder
+from media_service.llm.schema import SCHEMA_VERSION
 from media_service.ocr import quality
 from media_service.ocr.preprocess import PreprocessError
 from media_service.ocr.protocol import OcrProvider
@@ -53,13 +57,6 @@ logger = logging.getLogger(__name__)
 
 RETRY_BACKOFF_BASE_SECONDS: Final = 2.0
 RETRY_BACKOFF_MAX_SECONDS: Final = 60.0
-
-# Recorded on Phase 1's runs so they are distinguishable from model output after the fact. Phase 3
-# replaces the extractor, not this bookkeeping.
-RULE_BASED_PROVIDER: Final = "rule_based"
-RULE_BASED_MODEL: Final = "rule_based/v0"
-RULE_BASED_PROMPT_VERSION: Final = "none"
-
 
 @dataclass(frozen=True, slots=True)
 class ItemContext:
@@ -267,53 +264,59 @@ class ItemRunner:
     ) -> tuple[str, list[CandidateDraft]]:
         self._advance(context, ItemStatus.OCR_PROCESSING, ItemStatus.LLM_PROCESSING)
 
+        if result is None:
+            with self._unit_of_work() as unit:
+                result = _result_from(unit.artifacts.get_ocr(extraction_id))
+
         if plan.llm_run_id is not None:
-            # The call already succeeded and its output is on disk. Rebuilding the drafts from the
-            # stored response is what stops a crash after a paid call from paying for it twice.
+            # The call already succeeded and its output is on disk. Rebuilding from the stored
+            # response is what stops a crash after a paid call from paying for it twice.
             with self._unit_of_work() as unit:
                 run = unit.artifacts.get_llm_run(plan.llm_run_id)
-                return run.id, _drafts_from(run.validated_response or {})
+                stored = run.validated_response or {}
+                run_id = run.id
+            return run_id, self._rebuilt(stored, result)
 
-        with self._unit_of_work() as unit:
-            attempt = unit.artifacts.next_llm_attempt(
-                item_id=context.item_id, generation=context.generation
-            )
-            if result is None:
-                stored = unit.artifacts.get_ocr(extraction_id)
-                result = _result_from(stored)
+        # Recorded on every run for provenance and cost analysis. Reuse is governed by the
+        # generation-scoped resume above, not by this hash: a generation's inputs are fixed by
+        # construction -- changing preprocessing or the prompt version is what bumps it -- so within
+        # one generation an identical hash is guaranteed rather than checked. Matching across items
+        # would be wrong as well as unnecessary: two items sharing one run row cannot both record
+        # candidates, because `uq_prov__run_candidate` makes a run's candidate indexes unique.
+        request_hash = self._extraction.request_hash_for(result)
 
-        drafts = self._extraction.run(result)
-        response = _response_from(drafts)
+        recorder = DbAttemptRecorder(
+            self._unit_of_work,
+            item_id=context.item_id,
+            generation=context.generation,
+            ocr_extraction_id=extraction_id,
+            request_hash=request_hash,
+            prompt_version=self._extraction.prompt_version,
+            prompt_checksum=self._extraction.prompt_checksum,
+            schema_version=SCHEMA_VERSION,
+            catalog_version=CATEGORY_CATALOG_VERSION,
+        )
+        output = self._extraction.run(
+            result,
+            ExtractionContext(
+                item_id=context.item_id,
+                generation=context.generation,
+                ocr_extraction_id=extraction_id,
+                correlation_id=None,
+                recorder=recorder,
+            ),
+        )
+        if output.failed:
+            raise extraction_failure(output)
 
-        with self._unit_of_work() as unit:
-            run, created = unit.artifacts.record_llm_run(
-                LlmExtractionRun(
-                    id=new_llm_run_id(),
-                    ingestion_item_id=context.item_id,
-                    ocr_extraction_id=extraction_id,
-                    generation=context.generation,
-                    attempt=attempt,
-                    attempt_kind="primary",
-                    provider=RULE_BASED_PROVIDER,
-                    model=RULE_BASED_MODEL,
-                    prompt_version=RULE_BASED_PROMPT_VERSION,
-                    schema_version="1.0",
-                    category_catalog_version=CATEGORY_CATALOG_VERSION,
-                    request_hash=_request_hash(result.text),
-                    status="validated",
-                    validated_response=response,
-                    candidate_count=len(drafts),
-                    latency_ms=result.duration_ms,
-                    completed_at=utcnow(),
-                )
-            )
-            run_id = run.id
-            if not created:
-                # Another worker validated this generation first. Its answer is the one of record.
-                drafts = _drafts_from(run.validated_response or {})
-            unit.commit()
+        return recorder.validated_run_id or "", output.drafts
 
-        return run_id, drafts
+    def _rebuilt(self, payload: dict[str, Any], result: OcrResult) -> list[CandidateDraft]:
+        """Re-derive candidates from a stored response, re-running semantic validation."""
+        rebuilt = self._extraction.rebuild(payload, result)
+        if rebuilt.failed:
+            raise extraction_failure(rebuilt)
+        return rebuilt.drafts
 
     def _finish(
         self,
@@ -455,66 +458,10 @@ def _backoff_from(attempt_count: int) -> datetime:
     return utcnow() + timedelta(seconds=delay)
 
 
-def _request_hash(text: str) -> str:
-    material = "|".join([RULE_BASED_PROVIDER, RULE_BASED_MODEL, RULE_BASED_PROMPT_VERSION, text])
-    return sha256(material.encode()).hexdigest()
-
-
 def _candidate_key(context: ItemContext, run_id: str) -> str:
     """Identifies this candidate set, so a remote gateway can make it land exactly once."""
     material = f"{context.item_id}|{context.generation}|{run_id}"
     return sha256(material.encode()).hexdigest()
-
-
-def _response_from(drafts: list[CandidateDraft]) -> dict[str, Any]:
-    """The extractor's output, stored in the shape Phase 3's schema will produce."""
-    return {
-        "advertisements": [
-            {
-                "index": draft.index,
-                "title": draft.title,
-                "description": draft.description,
-                "category": draft.category,
-                "location": draft.location,
-                "price": draft.price,
-                "phones": list(draft.phones),
-                "language": draft.language,
-                "confidence": draft.confidence,
-                "confidence_label": draft.confidence_label,
-                "source_text": draft.source_text,
-                "source_block_ids": list(draft.source_block_ids),
-                "field_confidence": dict(draft.field_confidence),
-                "warnings": list(draft.warnings),
-                "warning_codes": list(draft.warning_codes),
-                "extracted_values": dict(draft.extracted_values),
-            }
-            for draft in drafts
-        ]
-    }
-
-
-def _drafts_from(response: dict[str, Any]) -> list[CandidateDraft]:
-    return [
-        CandidateDraft(
-            index=int(entry.get("index", position)),
-            title=entry.get("title", ""),
-            description=entry.get("description", ""),
-            category=entry.get("category", "other"),
-            location=entry.get("location", ""),
-            price=entry.get("price", ""),
-            phones=tuple(entry.get("phones", ())),
-            language=entry.get("language"),
-            confidence=entry.get("confidence"),
-            confidence_label=entry.get("confidence_label", "medium"),
-            source_text=entry.get("source_text", ""),
-            source_block_ids=tuple(entry.get("source_block_ids", ())),
-            field_confidence=dict(entry.get("field_confidence", {})),
-            warnings=tuple(entry.get("warnings", ())),
-            warning_codes=tuple(entry.get("warning_codes", ())),
-            extracted_values=dict(entry.get("extracted_values", {})),
-        )
-        for position, entry in enumerate(response.get("advertisements", []))
-    ]
 
 
 def _result_from(extraction: OcrExtraction | None) -> OcrResult:

@@ -132,16 +132,54 @@ class FakeOcrStep:
 
 @dataclass
 class CountingExtractor:
-    """Produces a fixed number of candidates and records how often it was asked."""
+    """An extraction stage that produces a fixed number of candidates, counting its calls.
+
+    Implements the same three methods the real service does, including `rebuild`, so a test that
+    exercises resume goes through the same shape production does.
+    """
 
     count: int = 1
     calls: int = 0
+    rebuilds: int = 0
 
-    def run(self, result):  # type: ignore[no-untyped-def]
-        from media_service.domain.listings import CandidateDraft
+    @property
+    def prompt_version(self) -> str:
+        return "fake/v1"
+
+    @property
+    def prompt_checksum(self) -> str:
+        return "fake0000"
+
+    def request_hash_for(self, result) -> str:  # type: ignore[no-untyped-def]
+        from hashlib import sha256
+
+        return sha256(f"counting|{self.count}|{result.text}".encode()).hexdigest()
+
+    def run(self, result, context):  # type: ignore[no-untyped-def]
+        from media_service.llm.service import ExtractionOutput
 
         self.calls += 1
-        # Cites the blocks it was given, like the real extractors do. A double that produced
+        run_id = context.recorder.started(_attempt_start()) if context.recorder else None
+        drafts = self._drafts(result)
+        if context.recorder and run_id:
+            context.recorder.finished(run_id, _validated(drafts))
+        return ExtractionOutput(
+            drafts=drafts,
+            run_id=run_id,
+            request_hash=self.request_hash_for(result),
+            validated_response={"schema_version": "1.0", "advertisements": []},
+        )
+
+    def rebuild(self, payload, result):  # type: ignore[no-untyped-def]
+        from media_service.llm.service import ExtractionOutput
+
+        self.rebuilds += 1
+        return ExtractionOutput(drafts=self._drafts(result), validated_response=payload)
+
+    def _drafts(self, result):  # type: ignore[no-untyped-def]
+        from media_service.domain.listings import CandidateDraft
+
+        # Cites the blocks it was given, like the real extractor does. A double that produced
         # uncited candidates would let a regression in citation handling pass unnoticed.
         cited = tuple(block.id for block in result.blocks)
         return [
@@ -157,6 +195,27 @@ class CountingExtractor:
             )
             for index in range(self.count)
         ]
+
+
+def _attempt_start():  # type: ignore[no-untyped-def]
+    from media_service.llm.runner import AttemptStart
+
+    return AttemptStart(
+        attempt=1, kind="primary", provider="counting", model="counting/v1", max_output_tokens=100
+    )
+
+
+def _validated(drafts):  # type: ignore[no-untyped-def]
+    from media_service.llm.runner import AttemptOutcome
+    from media_service.llm.types import LlmResponse
+
+    return AttemptOutcome(
+        status="validated",
+        response=LlmResponse(
+            raw_text="{}", payload={"schema_version": "1.0", "advertisements": []}
+        ),
+        candidate_count=len(drafts),
+    )
 
 
 @dataclass

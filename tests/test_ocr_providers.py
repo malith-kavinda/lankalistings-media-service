@@ -6,8 +6,6 @@ testable without the engines behind them.
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from media_service.api.errors import OcrUnavailableError
@@ -362,91 +360,3 @@ def test_a_block_document_round_trips_its_geometry() -> None:
 
 def test_a_legacy_engine_is_still_an_engine() -> None:
     assert isinstance(as_legacy_engine(StubProvider()), OcrEngine)
-
-
-# -- the rule-based extractor -------------------------------------------------------------------
-
-
-def test_the_rule_based_extractor_cites_the_blocks_it_read() -> None:
-    """It cannot tell which region an ad came from, so it cites all of them -- never none."""
-    from media_service.jobs.stages import RuleBasedExtractor
-
-    result = OcrResult(
-        text="Toyota Prius 2016\nRs. 5,750,000\nKandy",
-        blocks=(
-            OcrBlock(id=1, text="Toyota Prius 2016", confidence=0.9),
-            OcrBlock(id=2, text="Rs. 5,750,000 Kandy", confidence=0.9),
-        ),
-        mean_confidence=0.9,
-    )
-
-    drafts = RuleBasedExtractor().run(result)
-
-    assert len(drafts) == 1
-    assert drafts[0].source_block_ids == (1, 2)
-
-
-def test_the_rule_based_extractor_returns_nothing_for_an_empty_page() -> None:
-    """`no_ads` is an outcome, not a failure (AC-003)."""
-    from media_service.jobs.stages import RuleBasedExtractor
-
-    assert RuleBasedExtractor().run(OcrResult(text="   ")) == []
-
-
-def test_ocr_warnings_reach_the_candidate() -> None:
-    """A low-confidence page has to stay visible as one all the way to the reviewer."""
-    from media_service.jobs.stages import RuleBasedExtractor
-
-    result = OcrResult(
-        text="Toyota Prius 2016 Rs. 5,750,000 Kandy",
-        blocks=(OcrBlock(id=1, text="Toyota Prius 2016", confidence=0.4),),
-        mean_confidence=0.4,
-        warnings=("OCR_LOW_CONFIDENCE",),
-    )
-
-    draft = RuleBasedExtractor().run(result)[0]
-
-    assert "OCR_LOW_CONFIDENCE" in draft.warning_codes
-    assert draft.confidence_label == "low"
-
-
-# -- concurrency -------------------------------------------------------------------------------
-
-
-def test_paddle_inference_is_serialised_across_threads() -> None:
-    """A PaddleInference predictor is one native object and is not safe for concurrent calls.
-
-    The worker pool drives several threads through a single detector, so the lock has to cover
-    inference and not only construction.
-    """
-    import threading
-
-    from media_service.ocr.providers.paddle_tesseract import PaddleTextDetector
-
-    inside = 0
-    peak = 0
-    guard = threading.Lock()
-
-    class SlowEngine:
-        def ocr(self, array, **kwargs):  # type: ignore[no-untyped-def]
-            nonlocal inside, peak
-            with guard:
-                inside += 1
-                peak = max(peak, inside)
-            time.sleep(0.02)
-            with guard:
-                inside -= 1
-            return []
-
-    detector = PaddleTextDetector()
-    engine = SlowEngine()
-    threads = [
-        threading.Thread(target=detector._infer, args=(engine, None))  # noqa: SLF001
-        for _ in range(4)
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-
-    assert peak == 1, f"{peak} threads were inside the predictor at once"

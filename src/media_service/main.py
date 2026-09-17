@@ -33,7 +33,7 @@ from media_service.jobs.dispatchers import InlineDispatcher, ManualDispatcher
 from media_service.jobs.local_pool import LocalPoolDispatcher
 from media_service.jobs.protocol import JobDispatcher, NullDispatcher
 from media_service.jobs.runner import ItemRunner
-from media_service.jobs.stages import RuleBasedExtractor
+from media_service.llm.registry import build_extraction_service
 from media_service.ocr.compat import as_legacy_engine, as_provider
 from media_service.ocr.preprocess import ImagePreprocessor
 from media_service.ocr.registry import build_provider, preprocess_settings
@@ -53,6 +53,7 @@ def create_app(
     unit_of_work: UnitOfWorkFactory | None = None,
     dispatcher: JobDispatcher | None = None,
     store: FilesystemAssetStore | None = None,
+    extraction: object | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     resolved_settings.validate_startup()
@@ -72,13 +73,17 @@ def create_app(
         resolved_settings, unit_of_work=resolved_unit_of_work, store=resolved_store
     )
 
+    # Built before the runner so a refused provider -- a heuristic one in production, say --
+    # fails here, on deploy, rather than on a worker thread after a page has been uploaded.
+    resolved_extraction = extraction or build_extraction_service(resolved_settings)
+
     runner = ItemRunner(
         unit_of_work=resolved_unit_of_work,
         store=resolved_store,
         settings=resolved_settings,
         preprocess=ImagePreprocessor(preprocess_settings(resolved_settings)),
         ocr=resolved_provider,
-        extraction=RuleBasedExtractor(),
+        extraction=resolved_extraction,
         gateway=LocalListingGateway(),
     )
     resolved_dispatcher = dispatcher or build_dispatcher(
@@ -104,6 +109,7 @@ def create_app(
     app.state.settings = resolved_settings
     app.state.ocr_engine = resolved_ocr_engine
     app.state.ocr_provider = resolved_provider
+    app.state.extraction_service = resolved_extraction
     app.state.unit_of_work = resolved_unit_of_work
     app.state.asset_store = resolved_store
     app.state.dispatcher = resolved_dispatcher

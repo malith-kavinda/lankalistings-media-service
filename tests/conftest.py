@@ -215,3 +215,67 @@ def api_client(api_settings, unit_of_work, asset_store):  # type: ignore[no-unty
         store=asset_store,
     )
     return TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def no_live_provider_calls(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
+    """Make a real provider call impossible unless the test asks for one (AC-016).
+
+    A `fake` provider is a convention, and conventions get edited. This is the guarantee: every
+    outbound HTTP send raises unless the test carries the `live` marker, so a provider that
+    accidentally reaches the network fails loudly in CI instead of quietly spending money.
+    """
+    if request.node.get_closest_marker("live"):
+        yield
+        return
+
+    import httpx
+
+    def refuse(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError(
+            "This test attempted a real HTTP request. Mark it with @pytest.mark.live if that is "
+            "intended, or use a fake provider."
+        )
+
+    # The *network* transport, not `Client.send`. Starlette's TestClient is itself an httpx client
+    # talking to the app in-process through its own transport, so patching `send` would block every
+    # API test in the suite while proving nothing about outbound calls.
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", refuse)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", refuse)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def isolated_provider_environment(monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
+    """Keep a developer's exported credentials out of the tests.
+
+    Without this, someone with LLM_PROVIDER=anthropic in their shell gets different behaviour from
+    CI and no indication why.
+    """
+    for name in (
+        "LLM_PROVIDER",
+        "LLM_FAKE_MODE",
+        "LLM_FAKE_FIXTURE_DIR",
+        "LLM_STRUCTURED_MODE",
+        "LLM_PROMPT_VERSION",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_MODEL",
+        "GEMINI_API_KEY",
+        "GEMINI_MODEL",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_MODEL",
+        "MEDIA_SERVICE_ALLOW_FAKE_PROVIDERS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    reset_settings_cache()
+    yield
+    reset_settings_cache()
+
+
+@pytest.fixture
+def extraction_service():  # type: ignore[no-untyped-def]
+    from media_service.config import Settings
+    from media_service.llm.registry import build_extraction_service
+
+    return build_extraction_service(Settings())

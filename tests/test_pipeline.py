@@ -387,7 +387,7 @@ def _crash_after_ocr(pipeline, item_id: str) -> None:
     """
     original = pipeline.extraction.run
 
-    def explode(result):  # type: ignore[no-untyped-def]
+    def explode(result, context):  # type: ignore[no-untyped-def]
         raise _Crash
 
     pipeline.extraction.run = explode  # type: ignore[method-assign]

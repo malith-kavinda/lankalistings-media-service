@@ -14,7 +14,7 @@ from functools import lru_cache
 from os import getenv
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 WINDOWS_TESSERACT_PATHS = (
     Path("C:/Program Files/Tesseract-OCR/tesseract.exe"),
@@ -39,6 +39,9 @@ OPERATOR_AUTH_MODES = ("none", "static_token")
 JOB_DISPATCH_MODES = ("local_pool", "inline", "manual", "none")
 MEDIA_REPOSITORIES = ("json", "sql")
 OCR_PROVIDERS = ("tesseract", "paddle_tesseract", "vision_llm")
+LLM_PROVIDERS = ("openai_compatible", "gemini", "anthropic", "fake", "rule_based")
+LLM_STRUCTURED_MODES = ("auto", "json_schema", "json_object")
+LLM_FAKE_MODES = ("rule_based", "empty", "always_invalid", "fixture")
 
 DEFAULT_MAX_IMAGES_PER_BATCH = 25
 DEFAULT_MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -91,6 +94,19 @@ def _env_optional_int(name: str) -> int | None:
 def _env_path(name: str) -> Path | None:
     raw = getenv(name)
     return Path(raw) if raw and raw.strip() else None
+
+
+def _env_secret(name: str) -> SecretStr | None:
+    raw = getenv(name)
+    return SecretStr(raw) if raw and raw.strip() else None
+
+
+def _env_optional_bool(name: str) -> bool | None:
+    """Unset means "use the environment's answer", which is not the same as False."""
+    raw = getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _detect_tesseract_cmd() -> str | None:
@@ -166,6 +182,47 @@ class Settings(BaseModel):
     ocr_paddle_max_regions: int = Field(default=40, gt=0)
     ocr_paddle_fallback_to_tesseract: bool = True
 
+    # LLM selection and shared policy.
+    llm_provider: str = "fake"
+    llm_prompt_version: str = "v1"
+    llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    llm_max_output_tokens: int = Field(default=8000, gt=0)
+    llm_timeout_seconds: float = Field(default=60.0, gt=0)
+    # Two independent budgets (PRD 11.6): transport attempts and schema repairs. A retry must never
+    # consume a repair, and a repair must never consume a retry.
+    llm_max_attempts: int = Field(default=3, gt=0)
+    llm_max_repairs: int = Field(default=1, ge=0)
+    llm_backoff_base_seconds: float = Field(default=1.0, gt=0)
+    llm_backoff_max_seconds: float = Field(default=20.0, gt=0)
+    llm_total_deadline_seconds: float = Field(default=240.0, gt=0)
+    llm_concurrency: int = Field(default=4, gt=0)
+    llm_structured_mode: str = "auto"
+    llm_max_ocr_chars: int = Field(default=24000, gt=0)
+    llm_max_candidates_per_image: int = Field(default=20, gt=0)
+    llm_fake_mode: str = "rule_based"
+    llm_fake_fixture_dir: Path | None = None
+
+    # Per provider. Keys are SecretStr so a stray repr, log line, or error body cannot print one.
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_api_key: SecretStr | None = None
+    openai_model: str = "gpt-4o-mini"
+    openai_auth_header: str = "Authorization"
+
+    gemini_base_url: str = "https://generativelanguage.googleapis.com"
+    gemini_api_key: SecretStr | None = None
+    gemini_model: str = "gemini-2.0-flash"
+    gemini_thinking_budget: int | None = None
+
+    anthropic_base_url: str = "https://api.anthropic.com"
+    anthropic_api_key: SecretStr | None = None
+    anthropic_model: str = "claude-sonnet-4-5"
+    anthropic_version: str = "2023-06-01"
+    anthropic_tool_name: str = "emit_advertisements"
+
+    # Deliberate escape hatch for a local demo that wants a heuristic provider. Defaults to the
+    # environment answer, so nobody has to set it to get the safe behaviour.
+    allow_fake_providers_override: bool | None = None
+
     # Batch limits (PRD 15.1)
     max_images_per_batch: int = Field(default=DEFAULT_MAX_IMAGES_PER_BATCH, gt=0)
     max_image_bytes: int = Field(default=DEFAULT_MAX_IMAGE_BYTES, gt=0)
@@ -203,6 +260,17 @@ class Settings(BaseModel):
     def is_local_or_test(self) -> bool:
         return self.environment in {"local", "test"}
 
+    @property
+    def allow_fake_providers(self) -> bool:
+        """Whether a provider that invents advertisements without a model may be constructed.
+
+        Defaults to the environment rather than to a flag, so the safe answer needs no
+        configuration and the unsafe one has to be written down (PRD 11.6).
+        """
+        if self.allow_fake_providers_override is not None:
+            return self.allow_fake_providers_override
+        return self.is_local_or_test
+
     def validate_startup(self) -> None:
         """Refuse to boot on a configuration that would fail later, or fail open.
 
@@ -227,6 +295,21 @@ class Settings(BaseModel):
             raise ValueError(
                 f"MEDIA_REPOSITORY={self.media_repository!r} is not one of "
                 f"{', '.join(sorted(MEDIA_REPOSITORIES))}."
+            )
+        if self.llm_provider not in LLM_PROVIDERS:
+            raise ValueError(
+                f"LLM_PROVIDER={self.llm_provider!r} is not one of "
+                f"{', '.join(sorted(LLM_PROVIDERS))}."
+            )
+        if self.llm_structured_mode not in LLM_STRUCTURED_MODES:
+            raise ValueError(
+                f"LLM_STRUCTURED_MODE={self.llm_structured_mode!r} is not one of "
+                f"{', '.join(sorted(LLM_STRUCTURED_MODES))}."
+            )
+        if self.llm_fake_mode not in LLM_FAKE_MODES:
+            raise ValueError(
+                f"LLM_FAKE_MODE={self.llm_fake_mode!r} is not one of "
+                f"{', '.join(sorted(LLM_FAKE_MODES))}."
             )
         if self.ocr_provider not in OCR_PROVIDERS:
             # Dies at startup with the valid list rather than silently falling back to Tesseract.
@@ -275,6 +358,36 @@ def get_settings() -> Settings:
         ocr_paddle_merge_iou=_env_float("OCR_PADDLE_MERGE_IOU", 0.1),
         ocr_paddle_max_regions=_env_int("OCR_PADDLE_MAX_REGIONS", 40),
         ocr_paddle_fallback_to_tesseract=_env_bool("OCR_PADDLE_FALLBACK_TO_TESSERACT", True),
+        llm_provider=getenv("LLM_PROVIDER", "fake"),
+        llm_prompt_version=getenv("LLM_PROMPT_VERSION", "v1"),
+        llm_temperature=_env_float("LLM_TEMPERATURE", 0.0),
+        llm_max_output_tokens=_env_int("LLM_MAX_OUTPUT_TOKENS", 8000),
+        llm_timeout_seconds=_env_float("LLM_TIMEOUT_SECONDS", 60.0),
+        llm_max_attempts=_env_int("LLM_MAX_ATTEMPTS", 3),
+        llm_max_repairs=_env_int("LLM_MAX_REPAIRS", 1),
+        llm_backoff_base_seconds=_env_float("LLM_BACKOFF_BASE_SECONDS", 1.0),
+        llm_backoff_max_seconds=_env_float("LLM_BACKOFF_MAX_SECONDS", 20.0),
+        llm_total_deadline_seconds=_env_float("LLM_TOTAL_DEADLINE_SECONDS", 240.0),
+        llm_concurrency=_env_int("LLM_CONCURRENCY", 4),
+        llm_structured_mode=getenv("LLM_STRUCTURED_MODE", "auto"),
+        llm_max_ocr_chars=_env_int("LLM_MAX_OCR_CHARS", 24000),
+        llm_max_candidates_per_image=_env_int("LLM_MAX_CANDIDATES_PER_IMAGE", 20),
+        llm_fake_mode=getenv("LLM_FAKE_MODE", "rule_based"),
+        llm_fake_fixture_dir=_env_path("LLM_FAKE_FIXTURE_DIR"),
+        openai_base_url=getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        openai_api_key=_env_secret("OPENAI_API_KEY"),
+        openai_model=getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        openai_auth_header=getenv("OPENAI_AUTH_HEADER", "Authorization"),
+        gemini_base_url=getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"),
+        gemini_api_key=_env_secret("GEMINI_API_KEY"),
+        gemini_model=getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+        gemini_thinking_budget=_env_optional_int("GEMINI_THINKING_BUDGET"),
+        anthropic_base_url=getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+        anthropic_api_key=_env_secret("ANTHROPIC_API_KEY"),
+        anthropic_model=getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
+        anthropic_version=getenv("ANTHROPIC_VERSION", "2023-06-01"),
+        anthropic_tool_name=getenv("ANTHROPIC_TOOL_NAME", "emit_advertisements"),
+        allow_fake_providers_override=_env_optional_bool("MEDIA_SERVICE_ALLOW_FAKE_PROVIDERS"),
         max_images_per_batch=_env_int("MAX_IMAGES_PER_BATCH", DEFAULT_MAX_IMAGES_PER_BATCH),
         max_image_bytes=_env_int("MAX_IMAGE_BYTES", DEFAULT_MAX_IMAGE_BYTES),
         max_batch_bytes=_env_int("MAX_BATCH_BYTES", DEFAULT_MAX_BATCH_BYTES),
