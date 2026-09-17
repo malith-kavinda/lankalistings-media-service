@@ -2,7 +2,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
 
-from media_service.api.errors import ServiceError
+from media_service.api.deps import Operator
+from media_service.api.errors import ReviewRequiredError, ServiceError
 from media_service.api.schemas import (
     AdvertisementResponse,
     AdvertisementUpdateRequest,
@@ -14,6 +15,7 @@ from media_service.api.schemas import (
 from media_service.domain.models import AdvertisementStatus
 from media_service.services.advertisements import AdvertisementService
 from media_service.services.media import MediaExtractionService
+from media_service.services.review import ReviewService
 
 router = APIRouter()
 
@@ -46,6 +48,7 @@ async def health(request: Request) -> dict[str, object]:
 @router.post("/api/v1/media/extract", response_model=SuccessEnvelope)
 async def extract_text_from_image(
     request: Request,
+    operator: Operator,
     file: Annotated[UploadFile, File()],
 ) -> dict[str, object]:
     content_type = file.content_type or "application/octet-stream"
@@ -104,6 +107,7 @@ async def extract_text_from_image(
 @router.post("/api/v1/advertisements", response_model=SuccessEnvelope)
 async def create_advertisement(
     request: Request,
+    operator: Operator,
     title: Annotated[str, Form()],
     price: Annotated[str, Form()],
     category: Annotated[str, Form()],
@@ -159,6 +163,7 @@ async def create_advertisement(
 @router.post("/api/v1/newspaper-articles/extract", response_model=SuccessEnvelope)
 async def extract_newspaper_article(
     request: Request,
+    operator: Operator,
     image: Annotated[UploadFile, File()],
 ) -> dict[str, object]:
     image_bytes = await image.read()
@@ -215,7 +220,9 @@ async def list_advertisements(request: Request) -> dict[str, object]:
 
 
 @router.get("/api/v1/legacy/advertisements/review", response_model=SuccessEnvelope)
-async def list_legacy_review_advertisements(request: Request) -> dict[str, object]:
+async def list_legacy_review_advertisements(
+    request: Request, operator: Operator
+) -> dict[str, object]:
     """The prototype's review list, kept for the compatibility endpoint above (PRD 13.3).
 
     Moved off `/api/v1/advertisements/review`, which PRD 13.2 gives to the real review queue. The
@@ -236,9 +243,11 @@ async def list_legacy_review_advertisements(request: Request) -> dict[str, objec
 )
 async def update_legacy_advertisement(
     request: Request,
+    operator: Operator,
     advertisement_id: str,
     payload: AdvertisementUpdateRequest,
 ) -> dict[str, object]:
+    _refuse_pipeline_candidate(request, advertisement_id)
     service: AdvertisementService = request.app.state.advertisement_service
     advertisement = service.update(
         advertisement_id=advertisement_id,
@@ -256,8 +265,9 @@ async def update_legacy_advertisement(
     "/api/v1/legacy/advertisements/{advertisement_id}/approve", response_model=SuccessEnvelope
 )
 async def approve_legacy_advertisement(
-    request: Request, advertisement_id: str
+    request: Request, operator: Operator, advertisement_id: str
 ) -> dict[str, object]:
+    _refuse_pipeline_candidate(request, advertisement_id)
     service: AdvertisementService = request.app.state.advertisement_service
     advertisement = service.approve(advertisement_id)
     response = AdvertisementResponse.model_validate(advertisement)
@@ -281,3 +291,15 @@ async def get_extraction(request: Request, extraction_id: str) -> dict[str, obje
         ),
     )
     return {"data": response.model_dump(mode="json"), "error": None}
+
+
+def _refuse_pipeline_candidate(request: Request, advertisement_id: str) -> None:
+    """Keep the prototype's endpoints away from anything the pipeline produced.
+
+    The two stores are the same table once MEDIA_REPOSITORY=sql, which is the migration path, so
+    without this the old approve route is a second way to publish a candidate -- one with no field
+    validation, no version check, no row lock and no audit event.
+    """
+    review_service: ReviewService = request.app.state.review_service
+    if review_service.is_pipeline_candidate(advertisement_id):
+        raise ReviewRequiredError(advertisement_id)

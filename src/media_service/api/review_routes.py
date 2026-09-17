@@ -21,13 +21,19 @@ from media_service.api.review_schemas import (
     CandidateDetailResponse,
     CandidateEditRequest,
     CandidatePageResponse,
+    CategoryResponse,
     RejectionReasonResponse,
     RejectRequest,
     stored_status,
 )
 from media_service.api.schemas import SuccessEnvelope
 from media_service.config import Settings
-from media_service.db.repositories.review import DEFAULT_LIMIT, MAX_LIMIT, ReviewFilters
+from media_service.db.repositories.review import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    MAX_OFFSET,
+    ReviewFilters,
+)
 from media_service.services.review import ReviewService
 
 router = APIRouter(prefix="/api/v1", tags=["review"])
@@ -41,6 +47,14 @@ DEFAULT_CANDIDATE_STATES = ("pending_publish",)
 def list_rejection_reasons(request: Request, operator: Operator) -> dict[str, object]:
     return {
         "data": [reason.model_dump(mode="json") for reason in RejectionReasonResponse.catalog()],
+        "error": None,
+    }
+
+
+@router.get("/categories", response_model=SuccessEnvelope)
+def list_categories(request: Request, operator: Operator) -> dict[str, object]:
+    return {
+        "data": [category.model_dump(mode="json") for category in CategoryResponse.catalog()],
         "error": None,
     }
 
@@ -59,7 +73,7 @@ def list_review_queue(
     candidate_state: Annotated[list[str] | None, Query()] = None,
     q: Annotated[str | None, Query(max_length=120)] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
 ) -> dict[str, object]:
     service, status_wire = _service(request)
     page = service.queue(

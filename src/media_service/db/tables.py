@@ -476,6 +476,7 @@ class Advertisement(Base):
         Index("ix_ads__status_created", "status", "created_at"),
         Index("ix_ads__category_status", "category", "status"),
         Index("ix_ads__confidence", "confidence_overall"),
+        Index("ix_ads__warning_codes", "warning_codes", postgresql_using="gin"),
     )
 
 
@@ -576,6 +577,13 @@ class AdvertisementProvenance(Base):
         Index("ix_prov__batch", "ingestion_batch_id"),
         Index("ix_prov__item", "ingestion_item_id"),
         Index("ix_prov__fingerprint", "candidate_fingerprint"),
+        # The review queue's default filter, and this table never shrinks -- it is the append-only
+        # idempotency anchor. Without this index, "what is still outstanding" scans every candidate
+        # ever produced, and gets slower every month while the queue itself stays small.
+        Index("ix_prov__candidate_state", "candidate_state"),
+        # The review queue filters warnings with an array containment test, which a btree index
+        # cannot serve at all -- it has to be GIN, or the filter reads every candidate row.
+        Index("ix_prov__warning_codes", "warning_codes", postgresql_using="gin"),
     )
 
 

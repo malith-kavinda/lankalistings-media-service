@@ -14,7 +14,7 @@ this service keeps; status, category and confidence live on the advertisement, w
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from sqlalchemy import Select, func, or_, select
@@ -26,6 +26,9 @@ from media_service.db.tables import Advertisement, AdvertisementProvenance, Inge
 # working top-down then spends their attention where it changes the most outcomes.
 DEFAULT_LIMIT = 25
 MAX_LIMIT = 100
+# Deep paging is not how anyone works a queue -- they filter. Left uncapped it is just a way to make
+# PostgreSQL walk and discard a million rows per request.
+MAX_OFFSET = 10_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +66,7 @@ class ReviewRepository:
     ) -> ReviewPage:
         filters = filters or ReviewFilters()
         limit = max(1, min(limit, MAX_LIMIT))
+        offset = max(0, min(offset, MAX_OFFSET))
 
         statement = self._filtered(
             select(AdvertisementProvenance, Advertisement).join(
@@ -153,15 +157,22 @@ class ReviewRepository:
     def item_of(self, item_id: str) -> IngestionItem | None:
         return self._session.get(IngestionItem, item_id)
 
-    def counts_by_status(self, *, batch_id: str | None = None) -> dict[str, int]:
-        statement = (
+    def counts_by_status(self, filters: ReviewFilters | None = None) -> dict[str, int]:
+        """The status breakdown of whatever the caller is looking at.
+
+        The same filters as the page it accompanies, minus the two that *select* a status --
+        `status` and `candidate_state` -- because a breakdown filtered to one status is a single
+        number wearing a chart's clothes. Anything else would put counts beside a page that
+        describes a different set of candidates, which is worse than having no counts at all.
+        """
+        filters = filters or ReviewFilters()
+        scope = replace(filters, status=None, candidate_states=())
+        statement = self._filtered(
             select(Advertisement.status, func.count())
             .select_from(AdvertisementProvenance)
-            .join(Advertisement, Advertisement.id == AdvertisementProvenance.advertisement_id)
-            .group_by(Advertisement.status)
-        )
-        if batch_id is not None:
-            statement = statement.where(AdvertisementProvenance.ingestion_batch_id == batch_id)
+            .join(Advertisement, Advertisement.id == AdvertisementProvenance.advertisement_id),
+            scope,
+        ).group_by(Advertisement.status)
         return {status: count for status, count in self._session.execute(statement).all()}
 
     # -- filtering -----------------------------------------------------------------------------
@@ -185,7 +196,8 @@ class ReviewRepository:
         if filters.category:
             statement = statement.where(Advertisement.category == filters.category)
         if filters.warning:
-            # A PostgreSQL array containment check, which the GIN index on `warning_codes` serves.
+            # A PostgreSQL array containment check, served by the GIN indexes on both
+            # `warning_codes` columns.
             # Matching either side because a warning can be raised about the page or about the
             # candidate, and a moderator filtering for one means "show me anything flagged that
             # way".

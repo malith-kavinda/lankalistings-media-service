@@ -259,3 +259,23 @@ class InvalidReviewActionError(ServiceError):
 
     def __init__(self, message: str, *, code: str = "INVALID_REVIEW_ACTION") -> None:
         super().__init__(status_code=409, code=code, message=message)
+
+
+class ReviewRequiredError(ServiceError):
+    """A pipeline candidate was addressed through an endpoint that cannot review it.
+
+    The prototype's approve and edit routes have no notion of candidates: no field validation, no
+    version check, no audit event, and nothing that marks the provenance row as decided. Letting
+    them touch a candidate would make PRD invariant 2 -- nothing machine-generated becomes public
+    without a person approving it -- true only by convention.
+    """
+
+    def __init__(self, advertisement_id: str) -> None:
+        super().__init__(
+            status_code=409,
+            code="REVIEW_REQUIRED",
+            message=(
+                f"Advertisement {advertisement_id} was produced by the ingestion pipeline and "
+                "must be handled through /api/v1/advertisements/{id}/approve or /reject."
+            ),
+        )

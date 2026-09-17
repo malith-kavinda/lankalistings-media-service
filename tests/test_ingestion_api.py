@@ -300,3 +300,14 @@ def test_health_names_the_configured_provider(api_client) -> None:
     assert body["ocr_provider"] == "legacy"
     assert body["ocr_available"] is True
     assert body["ocr_unavailable_reason"] is None
+
+
+def test_the_service_publishes_the_limits_it_enforces(api_client) -> None:
+    """So the portal's pre-flight check and the server's answer stay one rule, not two copies."""
+    response = api_client.get("/api/v1/ingestion-limits")
+
+    assert response.status_code == 200
+    limits = response.json()["data"]
+    assert limits["max_images_per_batch"] > 0
+    assert limits["max_image_bytes"] > 0
+    assert "image/png" in limits["supported_content_types"]

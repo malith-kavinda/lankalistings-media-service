@@ -232,6 +232,7 @@ class LocalListingGateway:
         advertisement.rejected_at = None
         advertisement.rejected_by = None
         advertisement.rejection_reason_code = None
+        advertisement.rejection_note = None
 
         # `linked` is what stops a later reprocess from superseding a decision a person made.
         provenance.candidate_state = "linked"

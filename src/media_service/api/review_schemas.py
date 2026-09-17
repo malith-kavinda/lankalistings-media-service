@@ -15,10 +15,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from media_service.domain.categories import DEFAULT_CATALOG
 from media_service.domain.listings import ReviewerEdits
-from media_service.domain.review import MAX_NOTE_LENGTH, REJECTION_REASONS
+from media_service.domain.review import (
+    MAX_DESCRIPTION_LENGTH,
+    MAX_NOTE_LENGTH,
+    MAX_PHONE_LENGTH,
+    MAX_PHONES,
+    REJECTION_REASONS,
+)
 from media_service.domain.views import CandidateDetailView, CandidatePageView, CandidateView
 
 LEGACY_STATUS_WIRE = {"pending": "pending_review"}
@@ -176,23 +183,43 @@ class CandidatePageResponse(BaseModel):
             total=page.total,
             limit=page.limit,
             offset=page.offset,
-            counts={
-                wire_status(status, mode=status_wire): count
-                for status, count in page.counts.items()
-            },
+            counts=_wire_counts(page.counts, status_wire=status_wire),
         )
+
+
+def _wire_counts(counts: dict[str, int], *, status_wire: str) -> dict[str, int]:
+    """Sums rather than overwrites, so two stored statuses sharing a wire label cannot lose one."""
+    totals: dict[str, int] = {}
+    for status, count in counts.items():
+        label = wire_status(status, mode=status_wire)
+        totals[label] = totals.get(label, 0) + count
+    return totals
 
 
 class CandidateEditRequest(BaseModel):
     """Absent means untouched; present-and-empty means cleared."""
 
     title: str | None = Field(default=None, max_length=200)
-    description: str | None = None
+    # Bounded like its siblings. `description` is backed by an unbounded TEXT column and `phones`
+    # by a JSON array, so without a limit here a single edit can store a payload that is then
+    # re-served on every queue and detail read for the life of the row.
+    description: str | None = Field(default=None, max_length=MAX_DESCRIPTION_LENGTH)
     category: str | None = Field(default=None, max_length=48)
     location: str | None = Field(default=None, max_length=120)
     price: str | None = Field(default=None, max_length=64)
-    phones: list[str] | None = None
+    phones: list[str] | None = Field(
+        default=None, max_length=MAX_PHONES, description="Contact numbers as printed."
+    )
     version: int | None = None
+
+    @field_validator("phones")
+    @classmethod
+    def _bound_each_phone(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None:
+            for phone in value:
+                if len(phone) > MAX_PHONE_LENGTH:
+                    raise ValueError(f"a phone number may be at most {MAX_PHONE_LENGTH} characters")
+        return value
 
     def to_edits(self) -> ReviewerEdits:
         return ReviewerEdits(
@@ -246,4 +273,22 @@ class RejectionReasonResponse(BaseModel):
         return [
             cls(code=code, description=description)
             for code, description in sorted(REJECTION_REASONS.items())
+        ]
+
+
+class CategoryResponse(BaseModel):
+    slug: str
+    label: str
+
+    @classmethod
+    def catalog(cls) -> list[CategoryResponse]:
+        """The same catalog the prompt and the approval check use (PRD 11.7).
+
+        Served rather than duplicated in the portal: the previous hardcoded list held six labels,
+        two of which the server does not recognise, so a reviewer could pick a category that made
+        approval fail with no indication why.
+        """
+        return [
+            cls(slug=category.slug, label=category.label)
+            for category in DEFAULT_CATALOG.categories
         ]

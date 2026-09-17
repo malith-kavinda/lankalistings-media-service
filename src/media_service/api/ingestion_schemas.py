@@ -94,3 +94,18 @@ class BatchResponse(BaseModel):
 class RetryResponse(BaseModel):
     mode: str
     items: list[ItemResponse] = Field(default_factory=list)
+
+
+class IngestionLimitsResponse(BaseModel):
+    """The limits the server enforces, published so a client can enforce the same ones.
+
+    A portal that hardcodes these numbers is correct until someone sets MAX_IMAGES_PER_BATCH, after
+    which it silently accepts uploads the server will refuse. Serving them makes the client's
+    pre-flight check and the server's answer the same rule rather than two copies of it.
+    """
+
+    max_images_per_batch: int
+    max_image_bytes: int
+    max_batch_bytes: int
+    max_image_pixels: int
+    supported_content_types: list[str] = Field(default_factory=list)

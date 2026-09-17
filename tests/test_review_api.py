@@ -479,3 +479,14 @@ def test_an_approved_candidate_reaches_the_public_feed(
 
     feed = client.get("/api/v1/advertisements").json()["data"]
     assert [row["id"] for row in feed] == [advertisement.id]
+
+
+def test_the_category_catalog_is_published_for_the_portal(api_client) -> None:
+    """The portal's dropdown held two labels the server refuses; now it reads the real list."""
+    response = api_client.get("/api/v1/categories")
+
+    assert response.status_code == 200
+    slugs = [category["slug"] for category in response.json()["data"]]
+    assert slugs[0] == "vehicles"
+    assert "other" in slugs
+    assert "home" not in slugs

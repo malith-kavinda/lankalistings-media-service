@@ -19,15 +19,35 @@ from fastapi import APIRouter, File, Header, Query, Request, Response, UploadFil
 
 from media_service.api.deps import Operator
 from media_service.api.errors import ServiceError, correlation_id_from
-from media_service.api.ingestion_schemas import BatchResponse, ItemResponse, RetryResponse
+from media_service.api.ingestion_schemas import (
+    BatchResponse,
+    IngestionLimitsResponse,
+    ItemResponse,
+    RetryResponse,
+)
 from media_service.api.schemas import SuccessEnvelope
+from media_service.config import Settings
 from media_service.services.assets import PURPOSES, AssetService
 from media_service.services.ingestion import IngestionService
-from media_service.services.uploads import IncomingFile
+from media_service.services.uploads import SUPPORTED_IMAGE_TYPES, IncomingFile
 
 router = APIRouter(prefix="/api/v1", tags=["ingestion"])
 
 RETRY_MODES = ("resume", "reprocess")
+
+
+@router.get("/ingestion-limits", response_model=SuccessEnvelope)
+def get_ingestion_limits(request: Request, operator: Operator) -> dict[str, object]:
+    settings: Settings = request.app.state.settings
+    return _envelope(
+        IngestionLimitsResponse(
+            max_images_per_batch=settings.max_images_per_batch,
+            max_image_bytes=settings.max_image_bytes,
+            max_batch_bytes=settings.max_batch_bytes,
+            max_image_pixels=settings.max_image_pixels,
+            supported_content_types=sorted(SUPPORTED_IMAGE_TYPES),
+        )
+    )
 
 
 @router.post(

@@ -31,7 +31,7 @@ from media_service.db.repositories.review import DEFAULT_LIMIT, ReviewFilters
 from media_service.db.tables import Advertisement, AdvertisementProvenance
 from media_service.db.uow import UnitOfWork, UnitOfWorkFactory
 from media_service.domain.listings import ListingGateway, ReviewerEdits
-from media_service.domain.review import publication_errors, rejection_errors
+from media_service.domain.review import edit_errors, publication_errors, rejection_errors
 from media_service.domain.views import (
     CandidateDetailView,
     CandidatePageView,
@@ -75,7 +75,7 @@ class ReviewService:
     ) -> CandidatePageView:
         with self._unit_of_work() as unit:
             page = unit.review.search(filters, limit=limit, offset=offset)
-            counts = unit.review.counts_by_status(batch_id=filters.batch_id if filters else None)
+            counts = unit.review.counts_by_status(filters)
             return CandidatePageView(
                 candidates=tuple(
                     CandidateView.of(provenance, advertisement)
@@ -92,6 +92,17 @@ class ReviewService:
             provenance, advertisement = self._require(unit, advertisement_id)
             return self._detail_of(unit, provenance, advertisement)
 
+    def is_pipeline_candidate(self, advertisement_id: str) -> bool:
+        """Whether this advertisement was produced by the pipeline rather than entered by hand.
+
+        Asked by the prototype's endpoints, which predate review and cannot enforce it. Anything
+        with provenance is a candidate, and a candidate becomes public through `approve` or not at
+        all -- that is invariant 2, and a second code path that could publish one would make the
+        first path a convention rather than a guarantee.
+        """
+        with self._unit_of_work() as unit:
+            return unit.review.detail(advertisement_id) is not None
+
     # -- deciding ------------------------------------------------------------------------------
 
     def apply_edits(
@@ -103,6 +114,15 @@ class ReviewService:
         actor_id: str,
         correlation_id: str | None = None,
     ) -> CandidateDetailView:
+        errors = edit_errors(edits.category)
+        if errors:
+            raise ServiceError(
+                status_code=422,
+                code="VALIDATION_FAILED",
+                message="Request validation failed.",
+                details=errors,
+            )
+
         with self._unit_of_work() as unit:
             provenance, advertisement = self._for_decision(
                 unit, advertisement_id, expected_version=expected_version, action="edited"

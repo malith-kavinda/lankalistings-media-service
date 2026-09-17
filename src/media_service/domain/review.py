@@ -38,11 +38,16 @@ REASON_REQUIRING_NOTE: Final = "other"
 
 MAX_NOTE_LENGTH: Final = 2000
 
-# What a published advertisement must have. Deliberately short: description, price and phone are
-# genuinely optional in print classifieds -- a great many real ads are three words and a number --
-# and demanding them would make the queue unclearable rather than make the data better.
-REQUIRED_FOR_PUBLICATION: Final = ("title", "category")
+# Generous against any real classified advertisement, and finite, which is the point: every one of
+# these is stored and then re-served on every queue read.
+MAX_DESCRIPTION_LENGTH: Final = 8000
+MAX_PHONES: Final = 10
+MAX_PHONE_LENGTH: Final = 32
 
+# Deliberately short. Description, price and phone are genuinely optional in print classifieds -- a
+# great many real ads are three words and a number -- and demanding them would make the queue
+# unclearable rather than make the data better. The checks are written out in `publication_errors`
+# rather than driven from a list, because each one needs its own message.
 MIN_TITLE_LENGTH: Final = 3
 
 
@@ -119,3 +124,21 @@ def rejection_errors(reason_code: str, note: str | None) -> list[dict[str, str |
 
 def _error(field: str, code: str, message: str) -> dict[str, str | None]:
     return {"field": field, "code": code, "message": message}
+
+
+def edit_errors(category: str | None) -> list[dict[str, str | None]]:
+    """What a plain save refuses.
+
+    Only the catalog check. Everything else a publishable advertisement needs is deliberately *not*
+    required here -- a reviewer saving half a correction and coming back to it is normal, and a save
+    that demanded a complete advertisement would make the queue harder to work, not the data better.
+    A category outside the catalog is different: nothing can ever accept it, so storing it only
+    defers the failure to approval time with no explanation attached.
+    """
+    if category is None or not category.strip():
+        return []
+    if DEFAULT_CATALOG.contains(category):
+        return []
+    return [
+        _error("category", "UNKNOWN_VALUE", f"{category!r} is not a known category.")
+    ]
