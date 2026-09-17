@@ -192,14 +192,43 @@ Database, storage, and the worker:
   refused outside `local` and `test`.
 - `MEDIA_REPOSITORY`: `json` (default) or `sql` -- where the prototype endpoints keep their data.
 
+OCR:
+
+- `OCR_PROVIDER`: `tesseract` (default), `paddle_tesseract`, or `vision_llm`. An unknown name stops
+  the service starting and lists the valid ones -- a typo that silently selected a different engine
+  would change every extraction with nothing in the output saying so.
+- `OCR_LANGUAGES` (`sin+eng`), `OCR_TIMEOUT_SECONDS` (60), `OCR_CONCURRENCY` (2). The last gates how
+  many pages may be inside the engine at once, which is a different question from how many items may
+  be in flight.
+- `OCR_LOW_CONFIDENCE_THRESHOLD` (0.60) and `OCR_EMPTY_TEXT_MIN_CHARS` (8) decide the
+  `OCR_LOW_CONFIDENCE` and `OCR_EMPTY_TEXT` warnings a reviewer sees.
+- `OCR_PREPROCESS_*`: orientation is always applied; greyscale, autocontrast, denoise, threshold and
+  deskew are switches. Only orientation and greyscale are on by default -- see below for why.
+- `OCR_TESSERACT_{PSM,OEM,REGION_PSM}` and `OCR_PADDLE_*` tune the two engines.
+
+Extraction:
+
+- `LLM_PROVIDER`: `openai_compatible`, `gemini`, `anthropic`, `fake` (default), or `rule_based`.
+  The last two invent advertisements without a model, so the service **refuses to construct them
+  outside local and test** -- at startup, not at extraction time.
+  `MEDIA_SERVICE_ALLOW_FAKE_PROVIDERS` is the deliberate override.
+- `LLM_MAX_ATTEMPTS` (3) and `LLM_MAX_REPAIRS` (1) are **independent budgets**: a rate limit must
+  not consume the item's one repair, and a schema failure must not eat the retries it may need.
+- `LLM_STRUCTURED_MODE` (`auto`) picks strict `json_schema` or `json_object` by base URL.
+- `LLM_MAX_CANDIDATES_PER_IMAGE` (20), `LLM_MAX_OCR_CHARS` (24000), `LLM_TOTAL_DEADLINE_SECONDS`.
+- `OPENAI_*`, `GEMINI_*`, `ANTHROPIC_*` per provider. Keys are read as secrets and never printed;
+  `/health` says `GEMINI_API_KEY is not set`, never a value.
+
 Optional:
 
 - `MEDIA_SERVICE_MAX_UPLOAD_BYTES`: default `10485760`.
 - `MEDIA_SERVICE_METADATA_PATH`: default `.data/media_metadata.json`.
-- `MEDIA_SERVICE_CORS_ORIGINS`: comma-separated browser origins allowed to call the API. Defaults to local Next.js and Vite dev origins.
-- `TESSERACT_CMD`: explicit path to the Tesseract executable.
-- `TESSERACT_LANG`: OCR languages. Defaults to `sin+eng`.
-- `TESSERACT_TESSDATA_DIR`: explicit traineddata directory. Defaults to the project-local `.tessdata` folder when it exists.
+- `MEDIA_SERVICE_CORS_ORIGINS`: comma-separated browser origins allowed to call the API. Defaults
+  to local Next.js and Vite dev origins.
+- `TESSERACT_CMD`: explicit path to the Tesseract executable. Auto-detected on Windows.
+- `TESSERACT_TESSDATA_DIR`: traineddata directory. Defaults to the project-local `.tessdata` when it
+  exists, which is what makes Sinhala work -- the system install ships `eng` and not `sin`.
+  (`TESSERACT_LANG` is still read as a fallback for `OCR_LANGUAGES`.)
 
 ## Operational commands
 
@@ -304,10 +333,37 @@ under different settings are never silently compared.
 block. `python -m tests.fixtures.capture_ocr` regenerates them through the same production code, so
 the corpus and the provider cannot drift apart.
 
+### How a page becomes candidates
+
+The extraction stage renders the OCR blocks into a versioned prompt, calls a provider, and validates
+what comes back **in two tiers with deliberately different consequences**.
+
+*Tier 1 is structural*: unknown fields, wrong types, out-of-range or non-finite confidence. A failure
+there means the model misunderstood the schema, which another turn can fix, so it is **repairable**.
+
+*Tier 2 is semantic*: the candidate cap, category mapping, phone normalisation, and -- the important
+one -- whether every cited block actually exists in the recorded OCR result. A failure there is the
+model being wrong about the world, which asking again does not fix, so Tier 2 **never retries**. It
+warns, strips, or drops one candidate.
+
+Getting that backwards is expensive in a specific way, which is why `category` is typed as a plain
+string rather than an enum: as an enum, an unfamiliar trade would be a structural failure and would
+burn the item's one paid repair on something policy says to accept with a warning.
+
+A candidate whose evidence is entirely unknown is **discarded**, not warned about. It is the concrete
+detector for an advertisement the model invented: a fabrication has nowhere real to point, and a
+reviewer shown one has no way to tell it from a real advertisement.
+
+Retry and repair are two independent budgets. Truncation raises the output limit instead of
+repairing, because repair cannot lengthen a response that was cut off mid-object. A provider's own
+`Retry-After` is honoured over our backoff. One run row is written **before** each call, so a hung
+provider is visible in the store rather than invisible.
+
+The repair message carries field paths and error messages and **never field values** -- an
+OCR-derived phone number must not be echoed into a second prompt.
+
 ### What is still to come
 
-- **Phase 3** replaces the rule-based extractor -- which produces at most one candidate per page --
-  with an LLM behind `LLM_PROVIDER`, which is what makes zero-to-many candidates real. It also
-  brings `OCR_PROVIDER=vision_llm`, which is recognised today and refused with a reason.
 - **Phase 4** rebuilds the management portal around bulk intake, batch progress, and multi-candidate
   review.
+- `OCR_PROVIDER=vision_llm` now has the adapters it needs; wiring it is a small follow-on.
