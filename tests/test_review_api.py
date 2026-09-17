@@ -490,3 +490,48 @@ def test_the_category_catalog_is_published_for_the_portal(api_client) -> None:
     assert slugs[0] == "vehicles"
     assert "other" in slugs
     assert "home" not in slugs
+
+
+def test_detail_reports_the_coordinate_space_the_boxes_are_in(
+    api_client, session, unit_of_work, seeded
+) -> None:
+    """Preprocessing deskews and rescales, so block coordinates are not the original's pixels.
+
+    An overlay drawn on the original scan using these numbers points at the wrong text, which is
+    worse than no overlay -- so the page size they belong to travels with them.
+    """
+    batch, item, _, _ = seeded
+    from media_service.db.tables import MediaAsset, OcrExtraction
+    from media_service.domain.ids import new_ocr_extraction_id
+
+    asset = session.get(MediaAsset, item.source_asset_id)
+    extraction = OcrExtraction(
+        id=new_ocr_extraction_id(),
+        ingestion_item_id=item.id,
+        source_asset_id=asset.id,
+        generation=item.pipeline_generation,
+        attempt=1,
+        status="completed",
+        raw_text="Honda Fit 2014",
+        blocks=[{"id": 1, "box": [42, 50, 198, 90], "text": "Honda Fit 2014"}],
+        block_count=1,
+        width=1240,
+        height=1754,
+    )
+    session.add(extraction)
+    session.commit()
+
+    advertisement, provenance = make_candidate(
+        session, batch=batch, item=item, asset=asset, candidate_index=9
+    )
+    provenance.ocr_extraction_id = extraction.id
+    session.commit()
+
+    evidence = api_client.get(f"/api/v1/advertisements/{advertisement.id}").json()["data"][
+        "evidence"
+    ]
+
+    assert evidence["ocr_width"] == 1240
+    assert evidence["ocr_height"] == 1754
+    # `[left, top, width, height]`, the shape the overlay has to read.
+    assert evidence["blocks"][0]["box"] == [42, 50, 198, 90]

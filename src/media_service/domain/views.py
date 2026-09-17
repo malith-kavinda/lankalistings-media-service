@@ -252,6 +252,12 @@ class EvidenceView:
     model: str | None
     ocr_engine: str | None
     ocr_languages: str | None
+    # The page size the block coordinates are expressed in. Preprocessing deskews and rescales, so
+    # this is the *ocr_input* derivative's size, not the original scan's -- an overlay drawn against
+    # the original with these numbers points at the wrong text.
+    ocr_width: int | None = None
+    ocr_height: int | None = None
+    ocr_input_derivative_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

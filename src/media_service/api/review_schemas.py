@@ -119,6 +119,9 @@ class EvidenceResponse(BaseModel):
     model: str | None
     ocr_engine: str | None
     ocr_languages: str | None
+    ocr_width: int | None = None
+    ocr_height: int | None = None
+    ocr_input_derivative_id: str | None = None
 
 
 class CandidateDetailResponse(BaseModel):
@@ -153,6 +156,9 @@ class CandidateDetailResponse(BaseModel):
                 model=detail.evidence.model,
                 ocr_engine=detail.evidence.ocr_engine,
                 ocr_languages=detail.evidence.ocr_languages,
+                ocr_width=detail.evidence.ocr_width,
+                ocr_height=detail.evidence.ocr_height,
+                ocr_input_derivative_id=detail.evidence.ocr_input_derivative_id,
             ),
             item_id=detail.item.id,
             batch_id=detail.item.batch_id,
