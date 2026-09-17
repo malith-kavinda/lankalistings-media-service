@@ -3,11 +3,19 @@
 The adapters classify; this decides. That split is what keeps the policy testable: every transport
 failure arrives here already named, so the rules below never branch on a provider.
 
-**Two budgets, genuinely independent** (PRD 11.6). `attempts` covers transport -- timeouts, rate
-limits, a provider's 500s, and truncation. `repairs` covers one thing only: a response that parsed
-but failed Tier 1. A rate-limited request must not consume the item's single repair, and a schema
-failure must not eat the retries it might need afterwards, so they are counted separately and
-neither can spend the other.
+**Two budgets, genuinely independent** (PRD 11.6). `attempts` counts **transport failures** --
+timeouts, rate limits, a provider's 500s, truncation -- wherever they happen, including on a repair
+turn. `repairs` counts **Tier 1 failures** that were worth another turn. A rate-limited request
+must not consume the item's single repair, and a schema failure must not eat the retries it might
+need afterwards.
+
+Independence is not the same as exemption, and getting that wrong is expensive. An earlier version
+charged a failure to whichever budget matched the *turn* rather than the *failure*, so a transport
+error during a repair incremented `repairs` and then immediately decremented it again -- spending
+neither budget. Because `repair_instruction` is never cleared, every subsequent iteration took the
+same branch, and the loop retried a paid provider until the wall-clock deadline: measured at 46,092
+calls against a budget of three. Every iteration below must therefore charge exactly one budget, so
+the loop is bounded by `max_attempts + max_repairs + 1` calls no matter which order things fail in.
 
 **Truncation raises the output limit instead of repairing.** A response cut off mid-object cannot be
 repaired by asking again with the same budget; the next attempt gets a larger one. Classifying it as
@@ -61,7 +69,12 @@ class AttemptRecorder(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class AttemptStart:
-    attempt: int
+    """One call about to be made.
+
+    No attempt *number*: a database-backed recorder derives its own from the rows already present,
+    which is the only source that stays correct when two workers race the same item.
+    """
+
     kind: str
     provider: str
     model: str
@@ -82,8 +95,11 @@ class AttemptOutcome:
 class ExtractionOutcome:
     envelope: AdExtractionEnvelope | None = None
     response: LlmResponse | None = None
+    # Transport failures charged, and repair turns issued. `calls_made` is the total number of
+    # requests actually sent -- the number that costs money, and the one a test should bound.
     attempts_used: int = 0
     repairs_used: int = 0
+    calls_made: int = 0
     failure_code: str | None = None
     failure_detail: str | None = None
     validation_errors: tuple[dict[str, Any], ...] = field(default_factory=tuple)
@@ -128,6 +144,7 @@ class LlmExtractionRunner:
 
         attempts = 0
         repairs = 0
+        calls = 0
         max_output_tokens = settings.max_output_tokens
         prior_text: str | None = None
         repair_instruction: str | None = None
@@ -143,14 +160,10 @@ class LlmExtractionRunner:
                     attempts,
                     repairs,
                     last_errors,
+                    calls,
                 )
 
             is_repair = repair_instruction is not None
-            if is_repair:
-                repairs += 1
-            else:
-                attempts += 1
-
             request = LlmRequest(
                 system=system,
                 user=user,
@@ -160,12 +173,16 @@ class LlmExtractionRunner:
                 prior_response_text=prior_text if is_repair else None,
                 repair_instruction=repair_instruction,
             )
-            run_id = self._start(attempts + repairs, "repair" if is_repair else "primary",
-                                 max_output_tokens)
+            run_id = self._start(_kind_of(is_repair, attempts), max_output_tokens)
+            calls += 1
 
             try:
                 response = self._provider.complete(request)
             except LlmProviderError as error:
+                # Charged to the transport budget wherever it happened. A repair turn that fails in
+                # transport is still a transport failure; exempting it is what let the loop run
+                # unbounded.
+                attempts += 1
                 last_code, last_detail = error.code, error.detail
                 self._finish(run_id, AttemptOutcome(
                     status="provider_error", error_code=error.code, error_detail=error.detail
@@ -177,11 +194,12 @@ class LlmExtractionRunner:
                         int(max_output_tokens * TRUNCATION_GROWTH), MAX_OUTPUT_TOKEN_CEILING
                     )
                 if not error.retryable or attempts >= settings.max_attempts:
-                    return self._failed(error.code, error.detail, attempts, repairs, last_errors)
+                    return self._failed(
+                        error.code, error.detail, attempts, repairs, last_errors, calls
+                    )
 
-                # A repair that failed in transport is retried as a repair, not restarted.
-                if is_repair:
-                    repairs -= 1
+                # `repair_instruction` is deliberately left in place: a repair that failed in
+                # transport is retried as a repair rather than restarted from the original turn.
                 self._wait(error, attempts, deadline)
                 continue
 
@@ -209,6 +227,7 @@ class LlmExtractionRunner:
                         response=response,
                         attempts_used=attempts,
                         repairs_used=repairs,
+                        calls_made=calls,
                     )
 
             self._finish(run_id, AttemptOutcome(
@@ -220,8 +239,11 @@ class LlmExtractionRunner:
             ))
 
             if repairs >= settings.max_repairs:
-                return self._failed(last_code, last_detail, attempts, repairs, last_errors)
+                return self._failed(
+                    last_code, last_detail, attempts, repairs, last_errors, calls
+                )
 
+            repairs += 1
             prior_text = response.raw_text
             repair_instruction = self._prompt.render_repair(
                 {"validation_errors": _render_errors(last_errors)}
@@ -240,12 +262,11 @@ class LlmExtractionRunner:
         # Never sleep past the deadline: waiting for a window that closes first wastes the wait.
         self._sleep(max(min(delay, deadline - self._now()), 0.0))
 
-    def _start(self, sequence: int, kind: str, max_output_tokens: int) -> str:
+    def _start(self, kind: str, max_output_tokens: int) -> str:
         if self._recorder is None:
             return ""
         return self._recorder.started(
             AttemptStart(
-                attempt=sequence,
                 kind=kind,
                 provider=getattr(self._provider, "name", "unknown"),
                 model=getattr(self._provider, "model", "unknown"),
@@ -264,14 +285,27 @@ class LlmExtractionRunner:
         attempts: int,
         repairs: int,
         errors: tuple[dict[str, Any], ...],
+        calls: int = 0,
     ) -> ExtractionOutcome:
         return ExtractionOutcome(
             attempts_used=attempts,
             repairs_used=repairs,
+            calls_made=calls,
             failure_code=code or BUDGET_EXHAUSTED,
             failure_detail=detail,
             validation_errors=errors,
         )
+
+
+def _kind_of(is_repair: bool, transport_failures: int) -> str:
+    """Name the turn, so a run history reads as what happened.
+
+    A primary call retried after a transport failure is a `retry`, not a second `primary` -- the
+    distinction is why the vocabulary has three values.
+    """
+    if is_repair:
+        return "repair"
+    return "retry" if transport_failures else "primary"
 
 
 def _safe_errors(error: ValidationError) -> tuple[dict[str, Any], ...]:

@@ -100,9 +100,10 @@ def test_a_valid_first_response_costs_one_call(prompt) -> None:
     outcome = run(provider, prompt)
 
     assert outcome.succeeded
-    assert outcome.attempts_used == 1
+    assert outcome.calls_made == 1
+    # Neither budget was spent: nothing failed, in transport or in the schema.
+    assert outcome.attempts_used == 0
     assert outcome.repairs_used == 0
-    assert len(provider.requests) == 1
 
 
 # -- transport ---------------------------------------------------------------------------------
@@ -114,7 +115,8 @@ def test_a_retryable_failure_is_retried(prompt) -> None:
     outcome = run(provider, prompt)
 
     assert outcome.succeeded
-    assert outcome.attempts_used == 2
+    assert outcome.calls_made == 2
+    assert outcome.attempts_used == 1, "one transport failure was charged"
 
 
 def test_a_non_retryable_failure_stops_immediately(prompt) -> None:
@@ -230,8 +232,8 @@ def test_a_transport_retry_does_not_consume_the_repair_budget(prompt) -> None:
     outcome = run(provider, prompt, max_attempts=3, max_repairs=1)
 
     assert outcome.succeeded
-    assert outcome.attempts_used == 2
-    assert outcome.repairs_used == 1
+    assert outcome.attempts_used == 1, "the timeout was charged to transport"
+    assert outcome.repairs_used == 1, "the schema failure was charged to repair"
 
 
 def test_a_repair_does_not_consume_the_transport_budget(prompt) -> None:
@@ -240,7 +242,41 @@ def test_a_repair_does_not_consume_the_transport_budget(prompt) -> None:
     outcome = run(provider, prompt, max_attempts=3, max_repairs=1)
 
     assert outcome.succeeded
-    assert outcome.attempts_used <= 3
+    assert outcome.repairs_used == 1
+    assert outcome.attempts_used == 1
+    assert outcome.calls_made == 3
+
+
+def test_transport_failures_during_a_repair_are_still_bounded(prompt) -> None:
+    """The defect this test exists for: it once made 46,092 calls against a budget of three.
+
+    Charging a failure to whichever budget matched the *turn* rather than the *failure* meant a
+    transport error on a repair turn incremented `repairs` and immediately decremented it again,
+    spending neither. `repair_instruction` is never cleared, so every later iteration took the same
+    branch and the loop retried a paid provider until the wall-clock deadline.
+    """
+    provider = ScriptedProvider(INVALID, *[LlmProviderError(TIMEOUT, "t")] * 50)
+
+    outcome = run(provider, prompt, max_attempts=3, max_repairs=1, total_deadline_seconds=30.0)
+
+    assert not outcome.succeeded
+    assert outcome.failure_code == TIMEOUT, "the real cause, not a deadline"
+    assert outcome.attempts_used == 3
+    assert len(provider.requests) <= 3 + 1 + 1, "bounded by max_attempts + max_repairs + 1"
+
+
+def test_the_call_count_is_bounded_whatever_order_things_fail_in(prompt) -> None:
+    provider = ScriptedProvider(
+        LlmProviderError(TIMEOUT, "t"),
+        INVALID,
+        LlmProviderError(TIMEOUT, "t"),
+        *[LlmProviderError(TIMEOUT, "t")] * 20,
+    )
+
+    outcome = run(provider, prompt, max_attempts=3, max_repairs=1, total_deadline_seconds=30.0)
+
+    assert not outcome.succeeded
+    assert len(provider.requests) <= 3 + 1 + 1
 
 
 # -- the repair message ------------------------------------------------------------------------
@@ -314,9 +350,10 @@ def test_every_attempt_is_recorded_before_it_is_made(prompt) -> None:
         "schema_invalid",
         "validated",
     ]
+    # A primary call retried after a transport failure is a `retry`, not a second `primary`.
     assert [attempt.kind for attempt in recorder.started_attempts] == [
         "primary",
-        "primary",
+        "retry",
         "repair",
     ]
 

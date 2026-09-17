@@ -340,3 +340,55 @@ def test_a_resume_rebuilds_candidates_without_calling_the_provider(
 
     assert provider.calls == calls_after_first, "the provider was asked again"
     assert pipeline.service.get_item(progress.items[0].id).candidate_count == 1
+
+
+# -- provenance --------------------------------------------------------------------------------
+
+
+def test_model_candidates_are_labelled_as_model_output(unit_of_work, asset_store, session) -> None:
+    """`origin` exists so heuristic output stays distinguishable from model output.
+
+    Stamping every candidate with one value makes the column useless for exactly the question it
+    was added to answer.
+    """
+    provider = stubbed(
+        OpenAiCompatibleProvider(
+            base_url="https://api.openai.com/v1", api_key=SecretStr("k"), model="m"
+        ),
+        openai_body(THREE_ADS),
+    )
+    pipeline = pipeline_with(unit_of_work, asset_store, provider)
+    pipeline.service.create_batch(uploads(1), created_by=OPERATOR)
+
+    pipeline.run()
+
+    assert set(session.scalars(select(Advertisement.origin))) == {"llm_extraction"}
+
+
+def test_heuristic_candidates_stay_labelled_as_heuristic(
+    unit_of_work, asset_store, session
+) -> None:
+    pipeline = pipeline_with(unit_of_work, asset_store, FakeLlmProvider(mode="rule_based"))
+    pipeline.service.create_batch(uploads(1), created_by=OPERATOR)
+
+    pipeline.run()
+
+    assert set(session.scalars(select(Advertisement.origin))) == {"ocr_heuristic"}
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "expected"),
+    [
+        ("fake", "ocr_heuristic"),
+        ("rule_based", "ocr_heuristic"),
+        ("openai_compatible", "llm_extraction"),
+        ("gemini", "llm_extraction"),
+        ("anthropic", "llm_extraction"),
+    ],
+)
+def test_the_origin_follows_the_provider(provider_name: str, expected: str) -> None:
+    from media_service.llm.registry import build_extraction_service
+
+    service = build_extraction_service(Settings(llm_provider=provider_name))
+
+    assert service.candidate_origin == expected

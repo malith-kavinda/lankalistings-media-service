@@ -17,6 +17,7 @@ client and simply chose not to use it would still be one refactor away from maki
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Any, Final
 
@@ -66,6 +67,9 @@ class FakeLlmProvider:
         self._fixture_dir = fixture_dir
         self._rule_based = RuleBasedLlmProvider(unmatched_category=unmatched_category)
         self.calls = 0
+        # The worker pool can drive one provider from several threads, and a test that asserts on
+        # this count deserves a number that is actually right.
+        self._counter_lock = threading.Lock()
 
     @property
     def name(self) -> str:
@@ -88,7 +92,8 @@ class FakeLlmProvider:
         return None
 
     def complete(self, request: LlmRequest) -> LlmResponse:
-        self.calls += 1
+        with self._counter_lock:
+            self.calls += 1
         payload = self._payload(request)
         return LlmResponse(
             raw_text=json.dumps(payload, ensure_ascii=False),

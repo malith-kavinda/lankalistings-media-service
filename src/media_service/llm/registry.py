@@ -21,13 +21,14 @@ from typing import TYPE_CHECKING, Any, Final
 from media_service.config import LLM_PROVIDERS, Settings
 from media_service.llm.prompts.registry import PromptTemplate, load_prompt
 from media_service.llm.runner import RunnerSettings
+from media_service.llm.types import HEURISTIC_PROVIDERS
 
 if TYPE_CHECKING:
     from media_service.llm.service import LlmExtractionService
 
-# Providers that produce advertisements without a model. Useful, and dangerous in production for
-# exactly that reason.
-OFFLINE_PROVIDERS: Final = frozenset({"fake", "rule_based"})
+# Useful, and dangerous in production for exactly that reason. Shared with the candidate `origin`
+# so the guard and the label can never disagree about which providers are heuristic.
+OFFLINE_PROVIDERS: Final = HEURISTIC_PROVIDERS
 
 PROMPT_FAMILY: Final = "ad_extraction"
 DEFAULT_PROMPT_VERSION: Final = "v1"

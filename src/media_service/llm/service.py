@@ -30,6 +30,7 @@ from media_service.llm.prompts.registry import PromptTemplate
 from media_service.llm.rendering import render_blocks
 from media_service.llm.runner import AttemptRecorder, LlmExtractionRunner, RunnerSettings
 from media_service.llm.schema import SUPPORTED_SCHEMA_VERSIONS, AdExtractionEnvelope, json_schema
+from media_service.llm.types import HEURISTIC_ORIGIN, HEURISTIC_PROVIDERS, MODEL_ORIGIN
 from media_service.llm.validation import ValidatedCandidate, validate_extraction
 from media_service.ocr.types import OcrResult
 
@@ -95,6 +96,19 @@ class LlmExtractionService:
     @property
     def prompt_checksum(self) -> str:
         return self._prompt.checksum
+
+    @property
+    def candidate_origin(self) -> str:
+        """What produced these candidates, recorded on every advertisement.
+
+        The whole point of the column: a reviewer, an audit, or an accuracy measurement has to be
+        able to separate what a model said from what a regex guessed.
+        """
+        return (
+            HEURISTIC_ORIGIN
+            if self.provider_name in HEURISTIC_PROVIDERS
+            else MODEL_ORIGIN
+        )
 
     def is_available(self) -> bool:
         return self._provider.is_available()

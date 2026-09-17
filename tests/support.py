@@ -150,6 +150,10 @@ class CountingExtractor:
     def prompt_checksum(self) -> str:
         return "fake0000"
 
+    @property
+    def candidate_origin(self) -> str:
+        return "ocr_heuristic"
+
     def request_hash_for(self, result) -> str:  # type: ignore[no-untyped-def]
         from hashlib import sha256
 
@@ -201,7 +205,7 @@ def _attempt_start():  # type: ignore[no-untyped-def]
     from media_service.llm.runner import AttemptStart
 
     return AttemptStart(
-        attempt=1, kind="primary", provider="counting", model="counting/v1", max_output_tokens=100
+        kind="primary", provider="counting", model="counting/v1", max_output_tokens=100
     )
 
 

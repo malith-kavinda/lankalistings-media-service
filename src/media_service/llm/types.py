@@ -42,6 +42,16 @@ RETRYABLE_CODES: Final = frozenset(
     {TIMEOUT, RATE_LIMITED, SERVER_ERROR, TRANSPORT_ERROR, TRUNCATED_OUTPUT}
 )
 
+# Providers that produce advertisements without a model. Named here rather than in the registry so
+# both the startup guard and the candidate `origin` read the same list.
+HEURISTIC_PROVIDERS: Final = frozenset({"fake", "rule_based"})
+
+# `advertisements.origin`, which exists so heuristic output stays distinguishable from model output
+# after the fact. Stamping everything with one value would make the column useless for exactly the
+# question it was added to answer.
+HEURISTIC_ORIGIN: Final = "ocr_heuristic"
+MODEL_ORIGIN: Final = "llm_extraction"
+
 
 class LlmProviderError(Exception):
     """A provider failure, already classified by the adapter that understands it."""

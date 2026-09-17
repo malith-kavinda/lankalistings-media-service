@@ -339,7 +339,9 @@ class ItemRunner:
                 item=item,
                 drafts=drafts,
                 idempotency_key=_candidate_key(context, run_id),
-                origin="ocr_heuristic",
+                # Follows the provider that actually produced them, so heuristic output stays
+                # distinguishable from model output after the fact.
+                origin=self._extraction.candidate_origin,
                 ocr_extraction_id=extraction_id,
                 llm_extraction_run_id=run_id,
             )
