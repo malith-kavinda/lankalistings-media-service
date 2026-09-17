@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from media_service.api.errors import ServiceError, service_error_handler, validation_error_handler
 from media_service.api.ingestion_routes import router as ingestion_router
+from media_service.api.review_routes import router as review_router
 from media_service.api.routes import router
 from media_service.config import Settings, get_settings
 from media_service.db.engine import build_session_factory, cached_engine
@@ -42,6 +43,7 @@ from media_service.services.assets import AssetService
 from media_service.services.ingestion import IngestionService
 from media_service.services.media import MediaExtractionService
 from media_service.services.ocr import OcrEngine
+from media_service.services.review import ReviewService
 from media_service.storage import FilesystemAssetStore
 
 
@@ -131,6 +133,9 @@ def create_app(
     app.state.asset_service = AssetService(
         unit_of_work=resolved_unit_of_work, store=resolved_store
     )
+    app.state.review_service = ReviewService(
+        unit_of_work=resolved_unit_of_work, gateway=LocalListingGateway()
+    )
 
     if resolved_settings.cors_origins:
         app.add_middleware(
@@ -145,6 +150,7 @@ def create_app(
     app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.include_router(router)
     app.include_router(ingestion_router)
+    app.include_router(review_router)
     return app
 
 

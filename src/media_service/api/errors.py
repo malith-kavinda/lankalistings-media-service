@@ -218,3 +218,44 @@ class UnauthenticatedError(ServiceError):
 class ForbiddenError(ServiceError):
     def __init__(self, message: str = "Operator credentials are not valid.") -> None:
         super().__init__(status_code=403, code="FORBIDDEN", message=message)
+
+
+class AdvertisementNotFoundError(NotFoundError):
+    def __init__(self, advertisement_id: str) -> None:
+        super().__init__(
+            code="ADVERTISEMENT_NOT_FOUND",
+            message=f"No advertisement exists with id {advertisement_id}.",
+            field="advertisement_id",
+        )
+
+
+class VersionConflictError(ServiceError):
+    """Someone else edited this candidate since the reviewer loaded it (PRD 13.2).
+
+    409 with both versions, so the client can say what happened rather than silently overwriting a
+    colleague's correction -- which is the outcome optimistic locking exists to prevent.
+    """
+
+    def __init__(self, *, expected: int, actual: int) -> None:
+        super().__init__(
+            status_code=409,
+            code="VERSION_CONFLICT",
+            message=(
+                f"This candidate has changed since it was loaded (you have version {expected}, "
+                f"the current version is {actual}). Reload before saving."
+            ),
+            details=[
+                {
+                    "field": "version",
+                    "code": "STALE",
+                    "message": f"expected {expected}, current {actual}",
+                }
+            ],
+        )
+
+
+class InvalidReviewActionError(ServiceError):
+    """The candidate is not in a state where this decision means anything."""
+
+    def __init__(self, message: str, *, code: str = "INVALID_REVIEW_ACTION") -> None:
+        super().__init__(status_code=409, code=code, message=message)

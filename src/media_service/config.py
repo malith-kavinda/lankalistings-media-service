@@ -38,6 +38,10 @@ DEFAULT_CORS_ORIGINS = (
 OPERATOR_AUTH_MODES = ("none", "static_token")
 JOB_DISPATCH_MODES = ("local_pool", "inline", "manual", "none")
 MEDIA_REPOSITORIES = ("json", "sql")
+# `legacy` renames the stored `pending` to `pending_review` on the wire (PRD 10.3); `canonical`
+# publishes the stored vocabulary unchanged. Validated because a typo would silently pick
+# `canonical` and break the portal's only status check with nothing in the logs.
+ADVERTISEMENT_STATUS_WIRES = ("legacy", "canonical")
 OCR_PROVIDERS = ("tesseract", "paddle_tesseract", "vision_llm")
 LLM_PROVIDERS = ("openai_compatible", "gemini", "anthropic", "fake", "rule_based")
 LLM_STRUCTURED_MODES = ("auto", "json_schema", "json_object")
@@ -318,6 +322,11 @@ class Settings(BaseModel):
             raise ValueError(
                 f"OCR_PROVIDER={self.ocr_provider!r} is not one of "
                 f"{', '.join(sorted(OCR_PROVIDERS))}."
+            )
+        if self.advertisement_status_wire not in ADVERTISEMENT_STATUS_WIRES:
+            raise ValueError(
+                f"ADVERTISEMENT_STATUS_WIRE={self.advertisement_status_wire!r} is not one of "
+                f"{', '.join(sorted(ADVERTISEMENT_STATUS_WIRES))}."
             )
         if self.operator_auth_mode == "none" and not self.is_local_or_test:
             raise ValueError(

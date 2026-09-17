@@ -173,7 +173,7 @@ def test_the_prototype_endpoints_work_against_postgresql(
         "/api/v1/newspaper-articles/extract",
         files={"image": ("page.png", png_bytes(), "image/png")},
     )
-    listed = client.get("/api/v1/advertisements/review")
+    listed = client.get("/api/v1/legacy/advertisements/review")
 
     assert created.status_code == 200
     assert created.json()["data"]["advertisement"]["status"] == "pending_review"

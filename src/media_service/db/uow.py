@@ -30,6 +30,7 @@ from media_service.db.repositories.batches import BatchRepository
 from media_service.db.repositories.candidates import CandidateRepository
 from media_service.db.repositories.events import ReviewEventRepository
 from media_service.db.repositories.items import ItemRepository
+from media_service.db.repositories.review import ReviewRepository
 
 
 class UnitOfWork:
@@ -43,6 +44,7 @@ class UnitOfWork:
         self.artifacts = ArtifactRepository(session)
         self.candidates = CandidateRepository(session)
         self.events = ReviewEventRepository(session)
+        self.review = ReviewRepository(session)
         self._committed = False
 
     def commit(self) -> None:

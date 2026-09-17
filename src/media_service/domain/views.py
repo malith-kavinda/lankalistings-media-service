@@ -19,8 +19,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
-from media_service.db.tables import IngestionBatch, IngestionItem, MediaAsset
+from media_service.db.tables import (
+    Advertisement,
+    AdvertisementProvenance,
+    IngestionBatch,
+    IngestionItem,
+    MediaAsset,
+)
 from media_service.domain.item_state import BatchStatus, ItemStatus, Stage, stage_of
 
 
@@ -152,3 +159,131 @@ class AssetView:
 class RetryOutcome:
     mode: str
     items: tuple[ItemView, ...] = field(default=())
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateView:
+    """One row of the review queue.
+
+    Flattens the advertisement and its provenance into a single shape, because the split between
+    them is an implementation detail of where the data will eventually live (PRD 7.3) and a
+    moderator has no use for it.
+    """
+
+    id: str
+    provenance_id: str
+    status: str
+    candidate_state: str
+    origin: str
+    title: str
+    description: str
+    category: str
+    location: str
+    price: str
+    phones: tuple[str, ...]
+    language: str | None
+    confidence_overall: float | None
+    confidence_label: str
+    warning_codes: tuple[str, ...]
+    version: int
+    batch_id: str
+    item_id: str
+    source_asset_id: str
+    candidate_index: int | None
+    generation: int
+    created_at: datetime
+    updated_at: datetime
+    reviewed_at: datetime | None
+    reviewer_id: str | None
+
+    @classmethod
+    def of(cls, provenance: AdvertisementProvenance, advertisement: Advertisement) -> CandidateView:
+        return cls(
+            id=advertisement.id,
+            provenance_id=provenance.id,
+            status=advertisement.status,
+            candidate_state=provenance.candidate_state,
+            origin=advertisement.origin,
+            title=advertisement.title,
+            description=advertisement.description,
+            category=advertisement.category,
+            location=advertisement.location,
+            price=advertisement.price,
+            phones=tuple(str(phone) for phone in advertisement.phones or ()),
+            language=advertisement.language,
+            confidence_overall=advertisement.confidence_overall,
+            confidence_label=advertisement.extraction_confidence,
+            # Both sides' warnings, merged and deduplicated in order. A moderator asking "what is
+            # wrong with this one" does not care whether the pipeline flagged the page or the
+            # candidate.
+            warning_codes=_merged_warnings(provenance, advertisement),
+            version=advertisement.version,
+            batch_id=provenance.ingestion_batch_id,
+            item_id=provenance.ingestion_item_id,
+            source_asset_id=provenance.source_asset_id,
+            candidate_index=provenance.candidate_index,
+            generation=provenance.generation,
+            created_at=advertisement.created_at,
+            updated_at=advertisement.updated_at,
+            reviewed_at=provenance.reviewed_at,
+            reviewer_id=provenance.reviewer_id,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceView:
+    """Why the pipeline believes what it believes (FR-REV-003).
+
+    The OCR text and block ids are what let a reviewer check an extracted field against the page
+    instead of against their own guess, which is the difference between review and rubber-stamping.
+    """
+
+    source_text: str
+    ocr_text: str
+    ocr_extraction_id: str | None
+    llm_extraction_run_id: str | None
+    source_block_ids: tuple[int, ...]
+    blocks: tuple[dict[str, Any], ...]
+    field_confidence: dict[str, float]
+    warnings: tuple[str, ...]
+    extracted_values: dict[str, Any]
+    accepted_values: dict[str, Any] | None
+    provider: str | None
+    model: str | None
+    ocr_engine: str | None
+    ocr_languages: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateDetailView:
+    """A candidate with everything needed to rule on it without a second request.
+
+    `siblings` carries every candidate from the same image in order, which is what makes
+    "Ad 2 of 5 from page-3.png" and the previous/next controls possible (PRD 14.3).
+    """
+
+    candidate: CandidateView
+    evidence: EvidenceView
+    item: ItemView
+    siblings: tuple[str, ...]
+    position: int
+    sibling_count: int
+    source_filename: str
+
+
+@dataclass(frozen=True, slots=True)
+class CandidatePageView:
+    candidates: tuple[CandidateView, ...]
+    total: int
+    limit: int
+    offset: int
+    counts: dict[str, int]
+
+
+def _merged_warnings(
+    provenance: AdvertisementProvenance, advertisement: Advertisement
+) -> tuple[str, ...]:
+    seen: dict[str, None] = {}
+    for code in list(advertisement.warning_codes or ()) + list(provenance.warning_codes or ()):
+        seen.setdefault(str(code), None)
+    return tuple(seen)

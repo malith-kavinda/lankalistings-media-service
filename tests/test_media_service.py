@@ -227,13 +227,13 @@ def test_review_queue_lists_only_pending_review_advertisements() -> None:
         files={"image": ("article.png", PNG_1X1, "image/png")},
     )
     pending_id = create_response.json()["data"]["advertisement"]["id"]
-    client.post(f"/api/v1/advertisements/{pending_id}/approve")
+    client.post(f"/api/v1/legacy/advertisements/{pending_id}/approve")
     client.post(
         "/api/v1/newspaper-articles/extract",
         files={"image": ("second.png", PNG_1X1, "image/png")},
     )
 
-    response = client.get("/api/v1/advertisements/review")
+    response = client.get("/api/v1/legacy/advertisements/review")
 
     body = response.json()
     assert response.status_code == 200
@@ -250,7 +250,7 @@ def test_update_then_approve_draft_publishes_to_public_feed() -> None:
     advertisement_id = create_response.json()["data"]["advertisement"]["id"]
 
     update_response = client.patch(
-        f"/api/v1/advertisements/{advertisement_id}",
+        f"/api/v1/legacy/advertisements/{advertisement_id}",
         json={
             "title": "iPhone 14 Pro 256GB",
             "price": "Rs. 265,000",
@@ -259,7 +259,7 @@ def test_update_then_approve_draft_publishes_to_public_feed() -> None:
             "description": "Edited by reviewer before approval.",
         },
     )
-    approve_response = client.post(f"/api/v1/advertisements/{advertisement_id}/approve")
+    approve_response = client.post(f"/api/v1/legacy/advertisements/{advertisement_id}/approve")
     public_response = client.get("/api/v1/advertisements")
 
     assert update_response.status_code == 200

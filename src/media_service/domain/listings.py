@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from media_service.db.base import utcnow
 from media_service.db.tables import Advertisement, AdvertisementProvenance, IngestionItem
 from media_service.db.uow import UnitOfWork
 from media_service.domain.ids import new_advertisement_id, new_provenance_id
@@ -52,6 +53,33 @@ class CandidateDraft:
     extracted_values: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class ReviewerEdits:
+    """What a person changed. Absent fields are left alone, which is not the same as cleared."""
+
+    title: str | None = None
+    description: str | None = None
+    category: str | None = None
+    location: str | None = None
+    price: str | None = None
+    phones: tuple[str, ...] | None = None
+
+    def changed_fields(self, advertisement: Advertisement) -> tuple[str, ...]:
+        """Which fields this edit actually alters.
+
+        Stored on the review event rather than derived later: PRD 15.5 reports correction rate *per
+        field*, and diffing two JSON documents at query time is not practical.
+        """
+        changes: list[str] = []
+        for name in ("title", "description", "category", "location", "price"):
+            value = getattr(self, name)
+            if value is not None and value != getattr(advertisement, name):
+                changes.append(name)
+        if self.phones is not None and list(self.phones) != (advertisement.phones or []):
+            changes.append("phones")
+        return tuple(changes)
+
+
 class ListingGateway(Protocol):
     def create_candidates(
         self,
@@ -65,6 +93,33 @@ class ListingGateway(Protocol):
         llm_extraction_run_id: str | None = None,
     ) -> list[AdvertisementProvenance]:
         """Create every candidate for one item, or return the set already created for that key."""
+
+    def apply_edits(
+        self, unit: UnitOfWork, *, advertisement: Advertisement, edits: ReviewerEdits
+    ) -> Advertisement:
+        """Save a reviewer's corrections without changing the advertisement's status."""
+
+    def approve(
+        self,
+        unit: UnitOfWork,
+        *,
+        advertisement: Advertisement,
+        provenance: AdvertisementProvenance,
+        actor_id: str,
+    ) -> Advertisement:
+        """Publish. The only path by which a machine-made advertisement becomes readable."""
+
+    def reject(
+        self,
+        unit: UnitOfWork,
+        *,
+        advertisement: Advertisement,
+        provenance: AdvertisementProvenance,
+        actor_id: str,
+        reason_code: str,
+        note: str | None = None,
+    ) -> Advertisement:
+        """Refuse, with a reason a later analysis can group by."""
 
 
 class LocalListingGateway:
@@ -141,3 +196,89 @@ class LocalListingGateway:
             created.append(provenance)
 
         return created
+
+    # -- review decisions ----------------------------------------------------------------------
+
+    def apply_edits(
+        self, unit: UnitOfWork, *, advertisement: Advertisement, edits: ReviewerEdits
+    ) -> Advertisement:
+        for name in ("title", "description", "category", "location", "price"):
+            value = getattr(edits, name)
+            if value is not None:
+                setattr(advertisement, name, value)
+        if edits.phones is not None:
+            advertisement.phones = list(edits.phones)
+        unit.flush()
+        return advertisement
+
+    def approve(
+        self,
+        unit: UnitOfWork,
+        *,
+        advertisement: Advertisement,
+        provenance: AdvertisementProvenance,
+        actor_id: str,
+    ) -> Advertisement:
+        """The moment invariant 2 turns on.
+
+        Everything before this produced a *candidate*; this is the single transition that makes one
+        publicly readable, and it only ever happens because a person asked for it.
+        """
+        moment = utcnow()
+        advertisement.status = "active"
+        advertisement.approved_at = moment
+        advertisement.approved_by = actor_id
+        advertisement.published_at = moment
+        advertisement.rejected_at = None
+        advertisement.rejected_by = None
+        advertisement.rejection_reason_code = None
+
+        # `linked` is what stops a later reprocess from superseding a decision a person made.
+        provenance.candidate_state = "linked"
+        provenance.reviewer_id = actor_id
+        provenance.reviewed_at = moment
+        provenance.accepted_values = _accepted_values(advertisement)
+        unit.flush()
+        return advertisement
+
+    def reject(
+        self,
+        unit: UnitOfWork,
+        *,
+        advertisement: Advertisement,
+        provenance: AdvertisementProvenance,
+        actor_id: str,
+        reason_code: str,
+        note: str | None = None,
+    ) -> Advertisement:
+        moment = utcnow()
+        advertisement.status = "rejected"
+        advertisement.rejected_at = moment
+        advertisement.rejected_by = actor_id
+        advertisement.rejection_reason_code = reason_code
+        advertisement.rejection_note = note
+        advertisement.approved_at = None
+        advertisement.approved_by = None
+        advertisement.published_at = None
+
+        provenance.candidate_state = "discarded"
+        provenance.reviewer_id = actor_id
+        provenance.reviewed_at = moment
+        unit.flush()
+        return advertisement
+
+
+def _accepted_values(advertisement: Advertisement) -> dict[str, Any]:
+    """What the reviewer actually accepted, beside what the model proposed (FR-REV-009).
+
+    Both are needed: `extracted_values` is what the pipeline said, this is what a person signed off,
+    and the difference between them is the accuracy measurement.
+    """
+    return {
+        "title": advertisement.title,
+        "description": advertisement.description,
+        "category": advertisement.category,
+        "location": advertisement.location,
+        "price": advertisement.price,
+        "phones": list(advertisement.phones or []),
+    }

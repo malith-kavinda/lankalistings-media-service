@@ -183,16 +183,20 @@ def test_the_batch_endpoints_now_exist_alongside_the_single_ad_path() -> None:
 
 
 def test_baseline_review_queue_has_no_filters_or_pagination() -> None:
-    """PRD 13.2 requires batch, status, warning, category, and confidence filters."""
+    """The prototype queue ignores every filter PRD 13.2 asks for.
+
+    Recorded rather than fixed in place: those filters live on the new review queue, which reads
+    the ingestion schema. This route keeps its behaviour for the compatibility endpoint feeding it.
+    """
     client = client_for("Bicycle for sale\nRs. 25,000\nGalle")
     client.post(
         "/api/v1/newspaper-articles/extract",
         files={"image": ("page.png", PNG_1X1, "image/png")},
     )
 
-    response = client.get("/api/v1/advertisements/review?category=vehicles&limit=1")
+    response = client.get("/api/v1/legacy/advertisements/review?category=vehicles&limit=1")
 
     assert response.status_code == 200
     body = response.json()["data"]
     assert isinstance(body, list)
-    assert len(body) == 1, "Query parameters are accepted but ignored today"
+    assert len(body) == 1, "Query parameters are accepted but ignored here"

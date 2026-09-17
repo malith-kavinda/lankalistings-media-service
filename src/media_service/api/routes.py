@@ -214,8 +214,15 @@ async def list_advertisements(request: Request) -> dict[str, object]:
     return {"data": advertisements, "error": None}
 
 
-@router.get("/api/v1/advertisements/review", response_model=SuccessEnvelope)
-async def list_review_advertisements(request: Request) -> dict[str, object]:
+@router.get("/api/v1/legacy/advertisements/review", response_model=SuccessEnvelope)
+async def list_legacy_review_advertisements(request: Request) -> dict[str, object]:
+    """The prototype's review list, kept for the compatibility endpoint above (PRD 13.3).
+
+    Moved off `/api/v1/advertisements/review`, which PRD 13.2 gives to the real review queue. The
+    two read different stores -- this one the prototype's repository, that one the ingestion
+    schema -- so serving both from one path would mean answering with whichever happened to be
+    registered first.
+    """
     service: AdvertisementService = request.app.state.advertisement_service
     advertisements = [
         AdvertisementResponse.model_validate(advertisement).model_dump(mode="json")
@@ -224,8 +231,10 @@ async def list_review_advertisements(request: Request) -> dict[str, object]:
     return {"data": advertisements, "error": None}
 
 
-@router.patch("/api/v1/advertisements/{advertisement_id}", response_model=SuccessEnvelope)
-async def update_advertisement(
+@router.patch(
+    "/api/v1/legacy/advertisements/{advertisement_id}", response_model=SuccessEnvelope
+)
+async def update_legacy_advertisement(
     request: Request,
     advertisement_id: str,
     payload: AdvertisementUpdateRequest,
@@ -243,8 +252,12 @@ async def update_advertisement(
     return {"data": response.model_dump(mode="json"), "error": None}
 
 
-@router.post("/api/v1/advertisements/{advertisement_id}/approve", response_model=SuccessEnvelope)
-async def approve_advertisement(request: Request, advertisement_id: str) -> dict[str, object]:
+@router.post(
+    "/api/v1/legacy/advertisements/{advertisement_id}/approve", response_model=SuccessEnvelope
+)
+async def approve_legacy_advertisement(
+    request: Request, advertisement_id: str
+) -> dict[str, object]:
     service: AdvertisementService = request.app.state.advertisement_service
     advertisement = service.approve(advertisement_id)
     response = AdvertisementResponse.model_validate(advertisement)

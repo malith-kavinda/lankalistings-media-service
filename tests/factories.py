@@ -8,8 +8,20 @@ from __future__ import annotations
 
 from hashlib import sha256
 
-from media_service.db.tables import IngestionBatch, IngestionItem, MediaAsset
-from media_service.domain.ids import new_asset_id, new_batch_id, new_item_id
+from media_service.db.tables import (
+    Advertisement,
+    AdvertisementProvenance,
+    IngestionBatch,
+    IngestionItem,
+    MediaAsset,
+)
+from media_service.domain.ids import (
+    new_advertisement_id,
+    new_asset_id,
+    new_batch_id,
+    new_item_id,
+    new_provenance_id,
+)
 from media_service.storage import original_key
 
 
@@ -74,3 +86,72 @@ def seed_batch_with_items(session, *, count: int = 1, created_by: str = "operato
     session.add_all(items)
     session.commit()
     return batch, items
+
+
+def make_candidate(  # type: ignore[no-untyped-def]
+    session,
+    *,
+    batch,
+    item,
+    asset,
+    candidate_index: int = 0,
+    title: str = "Honda Fit 2014",
+    description: str = "One owner, full service history.",
+    category: str = "vehicles",
+    location: str = "Kandy",
+    price: str = "Rs. 5,750,000",
+    phones: tuple[str, ...] = ("0812233445",),
+    status: str = "pending",
+    origin: str = "llm_extraction",
+    confidence: float | None = 0.8,
+    warning_codes: tuple[str, ...] = (),
+    provenance_warnings: tuple[str, ...] = (),
+    candidate_state: str = "pending_publish",
+    source_text: str = "Honda Fit 2014 Rs. 5,750,000 Kandy 0812233445",
+    ocr_extraction_id: str | None = None,
+):
+    """One reviewable candidate: an advertisement plus the provenance that makes it one.
+
+    Both rows, always. An advertisement with no provenance is invisible to the review queue -- the
+    queue joins the two -- so a factory that made only the first would produce tests that pass
+    against an empty result set.
+    """
+    advertisement = Advertisement(
+        id=new_advertisement_id(),
+        title=title,
+        description=description,
+        category=category,
+        location=location,
+        price=price,
+        phones=list(phones),
+        language="en",
+        status=status,
+        origin=origin,
+        source_text=source_text,
+        extraction_confidence="high" if (confidence or 0) >= 0.8 else "medium",
+        confidence_overall=confidence,
+        warning_codes=list(warning_codes),
+        image_asset_id=asset.id,
+    )
+    session.add(advertisement)
+    session.flush()
+
+    provenance = AdvertisementProvenance(
+        id=new_provenance_id(),
+        advertisement_id=advertisement.id,
+        ingestion_batch_id=batch.id,
+        ingestion_item_id=item.id,
+        source_asset_id=asset.id,
+        ocr_extraction_id=ocr_extraction_id,
+        generation=item.pipeline_generation,
+        candidate_index=candidate_index,
+        source_block_ids=[1, 2],
+        field_confidence={"title": 0.9, "price": 0.7},
+        warnings=list(provenance_warnings),
+        warning_codes=list(provenance_warnings),
+        extracted_values={"title": title, "price": price},
+        candidate_state=candidate_state,
+    )
+    session.add(provenance)
+    session.commit()
+    return advertisement, provenance
